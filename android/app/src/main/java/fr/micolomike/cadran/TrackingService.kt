@@ -10,13 +10,19 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.location.GnssStatus
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.location.altitude.AltitudeConverter
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
@@ -39,6 +45,8 @@ object GpsInfo {
     @Volatile var satellitesVisible = 0
     @Volatile var lastGpsAt = 0L       // SystemClock.elapsedRealtime()
     @Volatile var lastFallbackAt = 0L
+    @Volatile var hasBarometer = false
+    @Volatile var pressure = 0f          // hPa, smoothed; 0 when unknown
 
     fun json(): String {
         val now = SystemClock.elapsedRealtime()
@@ -46,7 +54,8 @@ object GpsInfo {
         return "{\"service\":$serviceRunning,\"gps\":$gpsListening,\"fallback\":" +
             (fallbackProvider?.let { "\"$it\"" } ?: "null") +
             ",\"used\":$satellitesUsed,\"visible\":$satellitesVisible" +
-            ",\"gpsAge\":${age(lastGpsAt)},\"fallbackAge\":${age(lastFallbackAt)}}"
+            ",\"gpsAge\":${age(lastGpsAt)},\"fallbackAge\":${age(lastFallbackAt)}" +
+            ",\"baro\":$hasBarometer,\"p\":" + (if (pressure > 0f) pressure.toString() else "null") + "}"
     }
 }
 
@@ -59,11 +68,21 @@ object FixBuffer {
     private val queue = ArrayDeque<String>()
     private const val MAX = 30000 // about 8 hours at one fix per second
 
-    fun add(l: Location, fromNetwork: Boolean) {
+    fun add(l: Location, fromNetwork: Boolean, mslAltitude: Double?) {
         val speed = if (l.hasSpeed()) l.speed.toString() else "null"
         val acc = if (l.hasAccuracy()) l.accuracy.toString() else "999"
-        val json = "{\"lat\":${l.latitude},\"lon\":${l.longitude},\"acc\":$acc,\"speed\":$speed,\"t\":${l.time}" +
-            (if (fromNetwork) ",\"net\":true}" else "}")
+        val sb = StringBuilder(160)
+        sb.append("{\"lat\":").append(l.latitude).append(",\"lon\":").append(l.longitude)
+            .append(",\"acc\":").append(acc).append(",\"speed\":").append(speed).append(",\"t\":").append(l.time)
+        // Altitude above sea level when Android can compute it, otherwise the raw GPS height (above the ellipsoid).
+        if (mslAltitude != null) sb.append(",\"alt\":").append(mslAltitude).append(",\"altMsl\":true")
+        else if (l.hasAltitude()) sb.append(",\"alt\":").append(l.altitude).append(",\"altMsl\":false")
+        if (l.hasVerticalAccuracy()) sb.append(",\"vacc\":").append(l.verticalAccuracyMeters)
+        val p = GpsInfo.pressure
+        if (p > 0f) sb.append(",\"p\":").append(p)
+        if (fromNetwork) sb.append(",\"net\":true")
+        sb.append('}')
+        val json = sb.toString()
         synchronized(queue) {
             queue.addLast(json)
             while (queue.size > MAX) queue.removeFirst()
@@ -93,11 +112,38 @@ object FixBuffer {
 class TrackingService : Service() {
 
     private var registered = false
+    private var thread: HandlerThread? = null
+    private var altitudeConverter: Any? = null
+
+    /** Sea-level altitude (Android 14+), computed off the main thread. */
+    private fun mslAltitude(l: Location): Double? {
+        if (Build.VERSION.SDK_INT < 34) return null
+        try {
+            if (!l.hasMslAltitude() && l.hasAltitude()) {
+                val conv = (altitudeConverter as? AltitudeConverter) ?: AltitudeConverter().also { altitudeConverter = it }
+                conv.addMslAltitudeToLocation(this, l)
+            }
+            if (l.hasMslAltitude()) return l.mslAltitudeMeters
+        } catch (e: Exception) {
+            // No geoid data available: the raw GPS height is sent instead.
+        }
+        return null
+    }
+
+    private val pressureListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            val v = event.values[0]
+            if (v < 250f || v > 1100f) return
+            val p = GpsInfo.pressure
+            GpsInfo.pressure = if (p <= 0f) v else p + 0.15f * (v - p)
+        }
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    }
 
     private val gpsListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
             GpsInfo.lastGpsAt = SystemClock.elapsedRealtime()
-            FixBuffer.add(location, fromNetwork = false)
+            FixBuffer.add(location, fromNetwork = false, mslAltitude = mslAltitude(location))
         }
         override fun onProviderEnabled(provider: String) {}
         override fun onProviderDisabled(provider: String) {}
@@ -109,7 +155,7 @@ class TrackingService : Service() {
         override fun onLocationChanged(location: Location) {
             val now = SystemClock.elapsedRealtime()
             GpsInfo.lastFallbackAt = now
-            if (now - GpsInfo.lastGpsAt > 3000) FixBuffer.add(location, fromNetwork = true)
+            if (now - GpsInfo.lastGpsAt > 3000) FixBuffer.add(location, fromNetwork = true, mslAltitude = null)
         }
         override fun onProviderEnabled(provider: String) {}
         override fun onProviderDisabled(provider: String) {}
@@ -154,7 +200,14 @@ class TrackingService : Service() {
             PackageManager.PERMISSION_GRANTED
         if (!granted) return
         val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        val looper = Looper.getMainLooper()
+        // Location callbacks run on their own thread: the sea-level conversion may read files.
+        val t = HandlerThread("cadran-location").also { it.start() }
+        thread = t
+        val looper = t.looper
+        val sm = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val baro = sm.getDefaultSensor(Sensor.TYPE_PRESSURE)
+        GpsInfo.hasBarometer = baro != null
+        if (baro != null) sm.registerListener(pressureListener, baro, 200_000, Handler(looper))
         try {
             lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, gpsListener, looper)
             GpsInfo.gpsListening = true
@@ -189,8 +242,12 @@ class TrackingService : Service() {
             lm.removeUpdates(gpsListener)
             lm.removeUpdates(fallbackListener)
             lm.unregisterGnssStatusCallback(gnssCallback)
+            (getSystemService(Context.SENSOR_SERVICE) as SensorManager).unregisterListener(pressureListener)
             registered = false
         }
+        thread?.quitSafely()
+        thread = null
+        GpsInfo.pressure = 0f
         GpsInfo.serviceRunning = false
         GpsInfo.gpsListening = false
         GpsInfo.fallbackProvider = null

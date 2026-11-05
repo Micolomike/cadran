@@ -35,6 +35,7 @@ import java.io.File
 class MainActivity : ComponentActivity() {
 
     private lateinit var web: WebView
+    private lateinit var root: FrameLayout
 
     @Volatile
     private var deniedForGood = false
@@ -58,7 +59,7 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         val ground = Color.parseColor("#071A1F")
-        val root = FrameLayout(this)
+        root = FrameLayout(this)
         root.setBackgroundColor(ground)
         web = WebView(this)
         web.setBackgroundColor(ground)
@@ -93,6 +94,8 @@ class MainActivity : ComponentActivity() {
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.settings.allowFileAccess = false
+        // OpenStreetMap asks apps to identify themselves when loading map tiles.
+        web.settings.userAgentString = web.settings.userAgentString + " Cadran/" + appVersion() + " (+https://github.com/Micolomike/cadran)"
         web.addJavascriptInterface(Bridge(), "CadranNative")
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -170,11 +173,12 @@ class MainActivity : ComponentActivity() {
         file.writeText(content, Charsets.UTF_8)
         val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
         val send = Intent(Intent.ACTION_SEND).apply {
-            type = "text/csv"
+            type = if (safe.endsWith(".gpx")) "application/gpx+xml" else "text/csv"
             putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, safe)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        startActivity(Intent.createChooser(send, "Exporter les trajets"))
+        startActivity(Intent.createChooser(send, if (safe.endsWith(".gpx")) "Exporter le tracé" else "Exporter les trajets"))
     }
 
     private fun appVersion(): String = try {
@@ -257,5 +261,18 @@ class MainActivity : ComponentActivity() {
 
         @JavascriptInterface
         fun version(): String = appVersion()
+
+        @JavascriptInterface
+        fun setBarColor(hex: String) {
+            runOnUiThread {
+                try {
+                    val c = Color.parseColor(hex)
+                    root.setBackgroundColor(c)
+                    web.setBackgroundColor(c)
+                } catch (e: Exception) {
+                    // Keep the current colour.
+                }
+            }
+        }
     }
 }

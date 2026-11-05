@@ -1,4 +1,4 @@
-Cadran GPS 1.0.0
+Cadran GPS 1.1.0
 
 Mettre ces fichiers tels quels a la racine d'un depot GitHub, puis activer GitHub Pages.
 Polices : Big Shoulders Display et Saira, licence SIL Open Font License 1.1.
