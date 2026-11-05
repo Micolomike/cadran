@@ -788,7 +788,15 @@ button{cursor:pointer}
 .tab{flex:1 1 0;height:34px;border:0;border-radius:9px;background:transparent;color:var(--ink-dim);font-weight:600;font-size:14px}
 .tab[aria-selected="true"]{background:var(--accent);color:var(--btn-ink)}
 .view{grid-area:view;min-height:0;min-width:0;position:relative}
-.view-dial{container-type:size;display:grid;place-items:center}
+.view-dial{container-type:size;display:grid;place-items:center;touch-action:none}
+.pager{position:absolute;right:-8px;top:50%;transform:translateY(-50%);display:grid;gap:2px;z-index:2}
+.pg{width:28px;height:28px;display:grid;place-items:center;padding:0;border:0;background:transparent}
+.pg::before{content:"";width:9px;height:9px;border-radius:50%;border:1.5px solid var(--ink-dim)}
+.pg[aria-current="true"]::before{background:var(--accent);border-color:var(--accent)}
+.dial-wrap.slide-up{animation:slideUp .28s ease-out}
+.dial-wrap.slide-down{animation:slideDown .28s ease-out}
+@keyframes slideUp{from{transform:translateY(10%);opacity:0}}
+@keyframes slideDown{from{transform:translateY(-10%);opacity:0}}
 .dial-wrap{position:relative;width:min(100cqw,100cqh);height:min(100cqw,100cqh);container-type:inline-size}
 .dial-wrap svg{display:block;width:100%;height:100%;overflow:visible}
 
@@ -812,6 +820,21 @@ button{cursor:pointer}
 .dial-wrap[data-style="etcs"] .speed{font-size:10cqi;font-weight:600;color:var(--ground);line-height:1;padding-top:.6cqi}
 .dial-wrap[data-style="etcs"] .unit{position:absolute;top:17cqi;left:50%;transform:translateX(-50%);font-size:4cqi}
 .dial-wrap:not([data-style="ring"]):not([data-style="segments"]) .limit{display:none}
+/* Altimeter as the main dial: altitude in the upper window, speed in the lower one */
+.dial-wrap[data-style="alti"] .ro{top:62%;display:flex;align-items:baseline;gap:1.4cqi;padding:.6cqi 2cqi;border-radius:1.4cqi;background:var(--face-c);box-shadow:inset 0 0 0 .4cqi var(--bezel)}
+.dial-wrap[data-style="alti"] .speed{font-size:8.5cqi;font-weight:700;line-height:1}
+.dial-wrap[data-style="alti"] .unit{font-size:3.6cqi}
+.dial-wrap[data-style="alti"] .alt{top:24%;flex-wrap:wrap;justify-content:center;width:56cqi;row-gap:.6cqi}
+.dial-wrap[data-style="alti"] .alt-lbl{display:none}
+.dial-wrap[data-style="alti"] .alt-val{font-size:10.5cqi;padding:.8cqi 2.2cqi .4cqi;border-radius:1.4cqi;background:var(--face-c);box-shadow:inset 0 0 0 .4cqi var(--bezel);color:var(--dial-ink)}
+.dial-wrap[data-style="alti"] .alt-u{font-size:4cqi}
+.dial-wrap[data-style="alti"] .alt-vs{flex-basis:100%;text-align:center;font-size:3.6cqi}
+.dial-wrap[data-style="alti"] .sats{top:73%}
+:root[data-skin="retro"] .dial-wrap[data-style="alti"] .alt-val,:root[data-skin="retro"] .dial-wrap[data-style="alti"] .ro{background:var(--drum-edge);color:var(--drum-ink)}
+:root[data-skin="retro"] .dial-wrap[data-style="alti"] .speed,:root[data-skin="retro"] .dial-wrap[data-style="alti"] .unit{color:var(--drum-ink)}
+.dial-wrap[data-style="alti"] .needle{fill:var(--needle)!important;opacity:1!important}
+.kwin{fill:var(--face-c);stroke:var(--bezel);stroke-width:2}
+.kval{fill:var(--accent);font-family:var(--font-ui);font-weight:700;font-size:15px}
 .app.over .speed,.hud.over .hud-speed{color:var(--over)}
 .dial-wrap[data-style="etcs"] .speed{color:var(--ground)!important}
 .app.nosig .speed{color:var(--dial-ink-dim)}
@@ -880,7 +903,8 @@ button{cursor:pointer}
 .chart-note{font-size:12px;color:var(--ink-dim)}
 
 /* Map view */
-.view-map{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--dial)}
+/* isolation keeps Leaflet's own layers (z-index 400 to 1000) inside the map, under sheets and panels */
+.view-map{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--dial);isolation:isolate}
 .map{position:absolute;inset:0}
 .leaflet-container{background:var(--dial);font-family:var(--font-ui)}
 .leaflet-tile-pane{filter:var(--tile-filter)}
@@ -984,7 +1008,7 @@ button{cursor:pointer}
 .d-grid dt{font-size:12px;color:var(--ink-dim)}
 .d-grid dd{margin:0;font-weight:600;font-size:15px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .d-chart{height:150px;margin-bottom:10px}
-.d-map{position:relative;height:240px;border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:12px}
+.d-map{position:relative;isolation:isolate;height:240px;border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:12px}
 .d-actions{display:flex;gap:8px;flex-wrap:wrap}
 @media (max-width:420px){.d-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
@@ -1033,6 +1057,10 @@ button{cursor:pointer}
     </div>
 
     <section class="view view-dial" id="viewDial" role="tabpanel" aria-labelledby="tabDial">
+      <div class="pager" role="group" aria-label="Instrument principal">
+        <button type="button" class="pg" id="pgSpeed" aria-label="Compteur de vitesse en grand"></button>
+        <button type="button" class="pg" id="pgAlt" aria-label="Altimètre en grand"></button>
+      </div>
       <div class="dial-wrap" id="dialWrap" data-style="ring">
         <div class="leds" id="leds" aria-hidden="true"></div>
         <svg id="dial" viewBox="0 0 400 400" aria-hidden="true"></svg>
@@ -1136,6 +1164,10 @@ button{cursor:pointer}
       <select id="setAltMode"><option value="auto">Auto</option><option value="gps">GPS seul</option><option value="qnh">Baromètre (QNH)</option></select>
       <p id="altHelp">Auto : le baromètre donne les variations fines, le GPS recale l'altitude réelle.</p>
     </div>
+    <div class="row">
+      <label for="setAltUnit">Unité d'altitude</label>
+      <select id="setAltUnit"><option value="m">mètres</option><option value="ft">pieds</option></select>
+    </div>
     <div class="row" id="qnhRow" hidden>
       <label for="setQnh">Calage QNH</label>
       <div class="inline"><input type="text" class="short" id="setQnh" inputmode="decimal" autocomplete="off"><span>hPa</span></div>
@@ -1233,14 +1265,19 @@ const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-mo
 
 /* ---------- Units: everything is stored in metres, km/h and m/s ---------- */
 const UNITS = {
-  kmh: { speed: 'km/h', k: 1,          dist: 'km', dk: 1,          alt: 'm',  ak: 1,       vs: 'm/min',  vk: 60,     scales: [160, 200, 260], help: 'Distances en kilomètres, altitude en mètres.' },
-  mph: { speed: 'mph',  k: 1 / 1.609344, dist: 'mi', dk: 1 / 1.609344, alt: 'ft', ak: 3.28084, vs: 'ft/min', vk: 196.85, scales: [100, 120, 160], help: 'Distances en miles, altitude en pieds.' },
-  kt:  { speed: 'kt',   k: 1 / 1.852,  dist: 'NM', dk: 1 / 1.852,  alt: 'ft', ak: 3.28084, vs: 'ft/min', vk: 196.85, scales: [100, 160, 250], help: 'Distances en milles nautiques, altitude en pieds.' }
+  kmh: { speed: 'km/h', k: 1,            dist: 'km', dk: 1,            scales: [160, 200, 260], help: 'Distances en kilomètres.' },
+  mph: { speed: 'mph',  k: 1 / 1.609344, dist: 'mi', dk: 1 / 1.609344, scales: [100, 120, 160], help: 'Distances en miles.' },
+  kt:  { speed: 'kt',   k: 1 / 1.852,    dist: 'NM', dk: 1 / 1.852,    scales: [100, 160, 250], help: 'Distances en milles nautiques.' }
 };
+const ALT_UNITS = {
+  m:  { alt: 'm',  ak: 1,       vs: 'm/min',  vk: 60,     legend: '100 M',  still: 6 },
+  ft: { alt: 'ft', ak: 3.28084, vs: 'ft/min', vk: 196.85, legend: '100 FT', still: 20 }
+};
+const AU = () => ALT_UNITS[S.settings.altUnit] || ALT_UNITS.m;
 const U = () => UNITS[S.settings.units] || UNITS.kmh;
 const spd = (kmh) => kmh * U().k;              // km/h -> display unit
 const dst = (m) => m / 1000 * U().dk;          // metres -> display unit
-const alt = (m) => m * U().ak;                 // metres -> display unit
+const alt = (m) => m * AU().ak;                // metres -> display unit
 
 /* ---------- Skins ---------- */
 const SKINS = {
@@ -1257,7 +1294,8 @@ function freshTrip() {
     gainM: 0, lossM: 0, altMin: null, altMax: null, altRef: null };
 }
 function defaultSettings() {
-  return { alert: 0, scales: { kmh: 200, mph: 120, kt: 160 }, wake: true, units: 'kmh', skin: 'nuit', view: 'dial', altMode: 'auto', qnh: 1013.25 };
+  return { alert: 0, scales: { kmh: 200, mph: 120, kt: 160 }, wake: true, units: 'kmh', altUnit: 'm', skin: 'nuit', view: 'dial', dialMode: 'speed',
+    altMode: 'auto', qnh: 1013.25, swipeHint: false };
 }
 function defaults() { return { v: 2, settings: defaultSettings(), totalM: 0, trip: freshTrip(), history: [] }; }
 function load() {
@@ -1266,6 +1304,9 @@ function load() {
     if (!raw) return defaults();
     const d = JSON.parse(raw), b = defaults();
     const st = Object.assign(b.settings, d.settings || {});
+    if (d.settings && !d.settings.altUnit) st.altUnit = st.units === 'kmh' ? 'm' : 'ft';   // from version 1.0.4
+    if (!ALT_UNITS[st.altUnit]) st.altUnit = 'm';
+    if (st.dialMode !== 'alt') st.dialMode = 'speed';
     if (d.settings && d.settings.scale && !d.settings.scales) st.scales.kmh = +d.settings.scale;   // from version 1.0
     delete st.scale;
     if (!SKINS[st.skin]) st.skin = 'nuit';
@@ -1336,7 +1377,7 @@ function hav(a, b) {
 }
 
 /* live: what the screen shows right now; not persisted */
-const live = { targetKmh: 0, dispKmh: 0, lastFix: null, lastFixAt: -1e9, acc: null, geoOff: false, net: false, diag: null, buf: [] };
+const live = { dispAlt: null, targetKmh: 0, dispKmh: 0, lastFix: null, lastFixAt: -1e9, acc: null, geoOff: false, net: false, diag: null, buf: [] };
 
 /* ---------- Altimeter ----------
    Barometer (Android app): smooth and reacts within a second, but its zero drifts with the weather.
@@ -1654,7 +1695,8 @@ function line(r0, r1, a, cls, parent) {
 function angleOf(v) { return A0 + Math.max(0, Math.min(1, v / dial.scale)) * SWEEP; }
 function tickStep(max) { for (const s of [10, 20, 25, 50]) if (max / s <= 13) return s; return 50; }
 function buildDial() {
-  const svg = dial.svg, skin = SKINS[S.settings.skin] || SKINS.nuit, style = dial.style = skin.style;
+  const svg = dial.svg, skin = SKINS[S.settings.skin] || SKINS.nuit;
+  const style = dial.style = S.settings.dialMode === 'alt' ? 'alti' : skin.style;
   const scale = dial.scale = S.settings.scales[S.settings.units] || U().scales[1];
   const alertD = spd(+S.settings.alert || 0);
   const step = tickStep(scale), minor = step / 2;
@@ -1671,6 +1713,7 @@ function buildDial() {
   const m = el('feMerge', {}, f); el('feMergeNode', { in: 'b' }, m); el('feMergeNode', { in: 'SourceGraphic' }, m);
 
   el('circle', { cx: C, cy: C, r: 197, fill: 'url(#face)' }, svg);
+  if (style === 'alti') { buildAltimeter(skin); return; }
   if (style === 'classic') el('circle', { cx: C, cy: C, r: 194, fill: 'none', stroke: 'url(#chrome)', 'stroke-width': 9 }, svg);
   else el('circle', { cx: C, cy: C, r: 197, class: 'rim' }, svg);
 
@@ -1750,7 +1793,72 @@ function buildDial() {
   dial.lastKey = '';
   $('limitText').textContent = alertD > 0 ? `Alerte ${nf0.format(alertD)}` : '';
 }
+/* Altimeter: one turn of the long needle = 1000 m (or ft), the short needle = 10 000.
+   Same instrument in every skin; the skin gives it its colours, typeface and bezel. */
+function buildAltimeter(skin) {
+  const svg = dial.svg, au = AU();
+  if (skin.style === 'classic') el('circle', { cx: C, cy: C, r: 194, fill: 'none', stroke: 'url(#chrome)', 'stroke-width': 9 }, svg);
+  else el('circle', { cx: C, cy: C, r: 197, class: 'rim' }, svg);
+  for (let i = 0; i < 50; i++) {
+    const a = -90 + i * 7.2, major = i % 5 === 0;
+    line(major ? 148 : 162, 176, a, 'tick' + (major ? ' major' : ''), svg);
+  }
+  for (let n = 0; n < 10; n++) {
+    const [x, y] = pt(132, -90 + n * 36);
+    const t = el('text', { x: x.toFixed(2), y: y.toFixed(2), 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'lbl' }, svg);
+    t.textContent = n;
+  }
+  const lg = el('text', { x: C, y: 168, 'text-anchor': 'middle', class: 'brand' }, svg); lg.textContent = au.legend;
+  if (skin.style === 'asi') {
+    // Kollsman window: the altimeter setting in use.
+    el('rect', { x: 270, y: 186, width: 64, height: 28, rx: 4, class: 'kwin' }, svg);
+    const k = el('text', { x: 302, y: 201, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'kval' }, svg);
+    k.textContent = S.settings.altMode === 'qnh' ? nf0.format(+S.settings.qnh || P0).replace(/\s/g, '') : S.settings.altMode === 'gps' ? 'GPS' : 'AUTO';
+  }
+  dial.needleShort = el('g', {}, svg);
+  el('polygon', { points: `${C - 16},${C - 7} ${C + 88},${C - 6} ${C + 102},${C} ${C + 88},${C + 6} ${C - 16},${C + 7}`, class: 'needle' }, dial.needleShort);
+  dial.needle = el('g', {}, svg);
+  el('polygon', { points: `${C - 28},${C - 4} ${C + 120},${C - 3} ${C + 168},${C} ${C + 120},${C + 3} ${C - 28},${C + 4}`, class: 'needle' }, dial.needle);
+  if (skin.style === 'classic') el('polygon', { points: `${C + 120},${C - 3} ${C + 168},${C} ${C + 120},${C + 3}`, class: 'needle-tip' }, dial.needle);
+  el('circle', { cx: C, cy: C, r: 12, class: 'hub' }, svg);
+  $('leds').textContent = ''; dial.leds = [];
+  dial.lastKey = '';
+  $('limitText').textContent = '';
+}
+function drawAlti() {
+  const v = live.dispAlt == null ? null : alt(live.dispAlt);
+  const key = v == null ? 'none' : v.toFixed(1);
+  if (key === dial.lastKey) return;
+  dial.lastKey = key;
+  const turn = (x, per) => -90 + (((x % per) + per) % per) / per * 360;
+  dial.needle.setAttribute('transform', `rotate(${(v == null ? -90 : turn(v, 1000)).toFixed(2)} ${C} ${C})`);
+  dial.needleShort.setAttribute('transform', `rotate(${(v == null ? -90 : turn(v, 10000)).toFixed(2)} ${C} ${C})`);
+}
+function setDialMode(mode, dir) {
+  if (mode === S.settings.dialMode) return;
+  S.settings.dialMode = mode; persist(true);
+  buildDial(); renderPager();
+  const w = $('dialWrap');
+  w.classList.remove('slide-up', 'slide-down'); void w.offsetWidth;
+  if (!reduceMotion) w.classList.add(dir === 'down' ? 'slide-down' : 'slide-up');
+}
+function renderPager() {
+  $('pgSpeed').setAttribute('aria-current', String(S.settings.dialMode !== 'alt'));
+  $('pgAlt').setAttribute('aria-current', String(S.settings.dialMode === 'alt'));
+}
+$('pgSpeed').addEventListener('click', () => setDialMode('speed', 'down'));
+$('pgAlt').addEventListener('click', () => setDialMode('alt', 'up'));
+// Swipe up or down on the dial to swap the speedometer and the altimeter.
+let swipe = null;
+$('viewDial').addEventListener('pointerdown', (e) => { swipe = { x: e.clientX, y: e.clientY }; });
+$('viewDial').addEventListener('pointercancel', () => { swipe = null; });
+$('viewDial').addEventListener('pointerup', (e) => {
+  if (!swipe) return;
+  const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y; swipe = null;
+  if (Math.abs(dy) > 40 && Math.abs(dy) > Math.abs(dx) * 1.3) setDialMode(S.settings.dialMode === 'alt' ? 'speed' : 'alt', dy < 0 ? 'up' : 'down');
+});
 function drawDial(kmh) {
+  if (dial.style === 'alti') { drawAlti(); return; }
   const v = spd(kmh), p = Math.max(0, Math.min(1, v / dial.scale));
   const key = p.toFixed(4);
   if (key === dial.lastKey) return;
@@ -1795,7 +1903,7 @@ function renderDrums() {
 function applyUnitLabels() {
   const u = U();
   for (const e of document.querySelectorAll('.u-speed')) e.textContent = u.speed;
-  setText('speedUnit', u.speed); setText('hudUnit', u.speed); setText('uTrip', u.dist); setText('uTotal', u.dist); setText('altUnit', u.alt); setText('alertUnit', u.speed);
+  setText('speedUnit', u.speed); setText('hudUnit', u.speed); setText('uTrip', u.dist); setText('uTotal', u.dist); setText('altUnit', AU().alt); setText('alertUnit', u.speed);
   $('unitsHelp').textContent = u.help;
   cache.drums = null;
 }
@@ -1840,10 +1948,12 @@ function frame(now) {
     ? (d.visible > 0 ? `Satellites captés : ${d.used} sur ${d.visible}` : 'Aucun satellite capté') : '');
 
   // Altimeter
+  if (ALT.value == null) live.dispAlt = null;
+  else live.dispAlt = live.dispAlt == null || reduceMotion ? ALT.value : live.dispAlt + (ALT.value - live.dispAlt) * Math.min(1, dt * 4);
   if (ALT.value != null) {
     setText('altVal', nf0.format(alt(ALT.value)));
-    const vsU = ALT.vs * u.vk, still = Math.abs(vsU) < (u.alt === 'm' ? 6 : 20);
-    setText('altVs', still ? '' : `${vsU > 0 ? '▲' : '▼'} ${nf0.format(Math.abs(vsU))} ${u.vs}`);
+    const au = AU(), vsU = ALT.vs * au.vk, still = Math.abs(vsU) < au.still;
+    setText('altVs', still ? '' : `${vsU > 0 ? '▲' : '▼'} ${nf0.format(Math.abs(vsU))} ${au.vs}`);
     setClass('altVs', 'alt-vs' + (still ? '' : vsU > 0 ? ' up' : ' down'));
   } else { setText('altVal', '--'); setText('altVs', ''); }
 
@@ -1950,7 +2060,7 @@ function drawLiveCharts(now) {
   const alertD = spd(+S.settings.alert || 0);
   drawChart($('chSpeed'), speed, { minSpan: 20, yMin: 0, ref: alertD || null, empty: 'La courbe se trace dès que le GPS donne une vitesse.',
     xFmt: recording ? minFmt : (x) => x === 0 ? 'maintenant' : `${nf0.format(x)} min` });
-  drawChart($('chAlt'), altS, { minSpan: u.alt === 'm' ? 20 : 60, empty: 'Altitude en attente du baromètre ou du GPS.',
+  drawChart($('chAlt'), altS, { minSpan: AU().alt === 'm' ? 20 : 60, empty: 'Altitude en attente du baromètre ou du GPS.',
     xFmt: recording ? (x) => `${nf1.format(x)} ${u.dist}` : (x) => x === 0 ? 'maintenant' : `${nf0.format(x)} min` });
   setText('chSpeedTitle', recording ? 'Vitesse pendant le trajet' : 'Vitesse, 5 dernières minutes');
   setText('chAltTitle', recording ? 'Profil d\'altitude' : 'Altitude, 5 dernières minutes');
@@ -1959,8 +2069,8 @@ function drawLiveCharts(now) {
     ? [['Moy.', `${T.movingMs > 10000 ? nf0.format(spd(T.distM / 1000 / (T.movingMs / 3600000))) : 0}`], ['Max', `${nf0.format(spd(T.maxKmh))} ${u.speed}`]]
     : [['Max', `${nf0.format(spd(cs.vMax))} ${u.speed}`]]);
   $('chAltStats').innerHTML = statHtml(recording
-    ? [['D+', `${nf0.format(alt(T.gainM))}`], ['D−', `${nf0.format(alt(T.lossM))} ${u.alt}`]]
-    : cs.aMin == null ? [] : [['Min', nf0.format(alt(cs.aMin))], ['Max', `${nf0.format(alt(cs.aMax))} ${u.alt}`]]);
+    ? [['D+', `${nf0.format(alt(T.gainM))}`], ['D−', `${nf0.format(alt(T.lossM))} ${AU().alt}`]]
+    : cs.aMin == null ? [] : [['Min', nf0.format(alt(cs.aMin))], ['Max', `${nf0.format(alt(cs.aMax))} ${AU().alt}`]]);
 }
 window.addEventListener('resize', () => { chartsDirty = true; cache.dialSize = null; });
 
@@ -2104,7 +2214,7 @@ function renderHistory() {
     const open = document.createElement('button');
     open.type = 'button'; open.className = 'h-open';
     open.innerHTML = `<span class="h-km">${nf1.format(dst(h.distM))}<small>${u.dist}</small></span><span class="h-date"></span>
-      <span class="h-stats"><span><span>Durée</span> ${fmtDur(h.elapsedMs)}</span><span><span>Moy.</span> ${nf0.format(spd(avgOf(h)))} ${u.speed}</span><span><span>Max</span> ${nf0.format(spd(h.maxKmh))} ${u.speed}</span>${h.gainM != null ? `<span><span>D+</span> ${nf0.format(alt(h.gainM))} ${u.alt}</span>` : ''}</span>`;
+      <span class="h-stats"><span><span>Durée</span> ${fmtDur(h.elapsedMs)}</span><span><span>Moy.</span> ${nf0.format(spd(avgOf(h)))} ${u.speed}</span><span><span>Max</span> ${nf0.format(spd(h.maxKmh))} ${u.speed}</span>${h.gainM != null ? `<span><span>D+</span> ${nf0.format(alt(h.gainM))} ${AU().alt}</span>` : ''}</span>`;
     open.querySelector('.h-date').textContent = dateFmt.format(new Date(h.start || h.end));
     open.addEventListener('click', () => openDetail(h));
     const del = document.createElement('button');
@@ -2127,8 +2237,8 @@ async function openDetail(h) {
   const u = U();
   $('dTitle').textContent = 'Trajet du ' + dateFmt.format(new Date(h.start || h.end));
   const cells = [['Distance', `${nf1.format(dst(h.distM))} ${u.dist}`], ['Durée', fmtDur(h.elapsedMs)], ['Moyenne', `${nf0.format(spd(avgOf(h)))} ${u.speed}`],
-    ['Max', `${nf0.format(spd(h.maxKmh))} ${u.speed}`], ['D+', h.gainM != null ? `${nf0.format(alt(h.gainM))} ${u.alt}` : '--'], ['D−', h.lossM != null ? `${nf0.format(alt(h.lossM))} ${u.alt}` : '--'],
-    ['Alt. min', h.altMin != null ? `${nf0.format(alt(h.altMin))} ${u.alt}` : '--'], ['Alt. max', h.altMax != null ? `${nf0.format(alt(h.altMax))} ${u.alt}` : '--']];
+    ['Max', `${nf0.format(spd(h.maxKmh))} ${u.speed}`], ['D+', h.gainM != null ? `${nf0.format(alt(h.gainM))} ${AU().alt}` : '--'], ['D−', h.lossM != null ? `${nf0.format(alt(h.lossM))} ${AU().alt}` : '--'],
+    ['Alt. min', h.altMin != null ? `${nf0.format(alt(h.altMin))} ${AU().alt}` : '--'], ['Alt. max', h.altMax != null ? `${nf0.format(alt(h.altMax))} ${AU().alt}` : '--']];
   const grid = $('dGrid'); grid.textContent = '';
   for (const [k, v] of cells) { const d = document.createElement('div'); d.innerHTML = '<dt></dt><dd></dd>'; d.firstChild.textContent = k; d.lastChild.textContent = v; grid.appendChild(d); }
   $('btnDetailDel').textContent = 'Supprimer ce trajet'; $('btnDetailDel').classList.add('warn'); $('btnDetailDel').dataset.armed = '';
@@ -2138,7 +2248,7 @@ async function openDetail(h) {
   detail.pts = pts;
   const { speed, altS } = seriesFor(pts, false);
   drawChart($('dSpeed'), speed, { minSpan: 20, yMin: 0, empty: 'Pas de courbe pour ce trajet (enregistré avant la version 1.1).', xFmt: minFmt });
-  drawChart($('dAlt'), altS, { minSpan: u.alt === 'm' ? 20 : 60, empty: 'Pas d\'altitude pour ce trajet.', xFmt: (x) => `${nf1.format(x)} ${u.dist}` });
+  drawChart($('dAlt'), altS, { minSpan: AU().alt === 'm' ? 20 : 60, empty: 'Pas d\'altitude pour ce trajet.', xFmt: (x) => `${nf1.format(x)} ${u.dist}` });
   $('btnGpx').hidden = pts.length < 2 || inFrame && !NATIVE;
   closeDetailMap();
   dMap = makeMap('dMap', 'dMapNote');
@@ -2209,6 +2319,7 @@ function renderScaleOptions() {
 }
 function syncSettings() {
   $('setUnits').value = S.settings.units;
+  $('setAltUnit').value = S.settings.altUnit;
   renderScaleOptions();
   $('setAlert').value = S.settings.alert > 0 ? nf0.format(spd(S.settings.alert)) : '';
   $('setWake').checked = !!S.settings.wake;
@@ -2228,6 +2339,9 @@ $('btnSettings').addEventListener('click', () => { syncSettings(); if (NATIVE) r
 $('setUnits').addEventListener('change', (e) => {
   S.settings.units = e.target.value; persist(true); applyUnitLabels(); buildDial(); syncSettings(); chartsDirty = true;
 });
+$('setAltUnit').addEventListener('change', (e) => {
+  S.settings.altUnit = e.target.value; persist(true); applyUnitLabels(); buildDial(); chartsDirty = true;
+});
 $('setScale').addEventListener('change', (e) => { S.settings.scales[S.settings.units] = +e.target.value; persist(true); buildDial(); });
 $('setAlert').addEventListener('change', (e) => {
   const raw = e.target.value.trim(), v = parseNum(raw);
@@ -2236,12 +2350,12 @@ $('setAlert').addEventListener('change', (e) => {
   else { toast('Entre une vitesse, par exemple 90'); syncSettings(); return; }
   persist(true); buildDial(); syncSettings(); chartsDirty = true;
 });
-function resetAltimeter() { Object.assign(ALT, { off: null, n: 0, gpsEma: null, value: null, src: '', hist: [], vs: 0 }); S.trip.altRef = null; }
+function resetAltimeter() { Object.assign(ALT, { off: null, n: 0, gpsEma: null, value: null, src: '', hist: [], vs: 0 }); live.dispAlt = null; S.trip.altRef = null; }
 // Changing the altitude source makes the reading jump: start the climb/descent count again from the new value.
-$('setAltMode').addEventListener('change', (e) => { S.settings.altMode = e.target.value; resetAltimeter(); persist(true); syncSettings(); });
+$('setAltMode').addEventListener('change', (e) => { S.settings.altMode = e.target.value; resetAltimeter(); persist(true); syncSettings(); buildDial(); });
 $('setQnh').addEventListener('change', (e) => {
   const v = parseNum(e.target.value);
-  if (isFinite(v) && v >= 900 && v <= 1080) { S.settings.qnh = v; S.trip.altRef = null; ALT.hist = []; persist(true); toast('QNH ' + nf1.format(v) + ' hPa'); }
+  if (isFinite(v) && v >= 900 && v <= 1080) { S.settings.qnh = v; S.trip.altRef = null; ALT.hist = []; persist(true); buildDial(); toast('QNH ' + nf1.format(v) + ' hPa'); }
   else toast('Entre un QNH entre 900 et 1080 hPa, par exemple 1013,2');
   syncSettings();
 });
@@ -2314,6 +2428,10 @@ buildDial();
 renderControls();
 syncSettings();
 setView(S.settings.view);
+renderPager();
+if (!S.settings.swipeHint) setTimeout(() => {
+  if (S.settings.view === 'dial' && $('perm').hidden) { toast('Glisse vers le haut sur le cadran pour l\'altimètre'); S.settings.swipeHint = true; persist(true); }
+}, 2500);
 if (S.trip.state !== 'idle') IDB.get('current').then((t) => { if (Array.isArray(t) && !demo && !track.length) { track = t; mapRedrawTrack(); chartsDirty = true; } });
 requestAnimationFrame(frame);
 keepAwake();
