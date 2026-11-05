@@ -162,6 +162,7 @@ button{cursor:pointer}
 .h-stats{grid-column:1;display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;color:var(--ink);font-variant-numeric:tabular-nums}
 .h-stats span{color:var(--ink-dim)}
 .h-del{grid-column:2;grid-row:1/span 3;align-self:center}
+.version{margin:4px 0 0;padding-top:12px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-dim)}
 .empty{padding:22px 0 10px;color:var(--ink-dim);max-width:46ch}
 
 /* Location panel */
@@ -261,7 +262,7 @@ button{cursor:pointer}
     <div class="row">
       <label for="setWake">Garder l'écran allumé</label>
       <span class="switch"><input type="checkbox" id="setWake"><span></span></span>
-      <p>Le GPS ne mesure que lorsque l'appli est affichée. Écran éteint, la distance est rattrapée en ligne droite au retour.</p>
+      <p id="wakeHelp">Le GPS ne mesure que lorsque l'appli est affichée. Écran éteint, la distance est rattrapée en ligne droite au retour.</p>
     </div>
     <div class="row">
       <label for="setTotal">Compteur total</label>
@@ -278,6 +279,7 @@ button{cursor:pointer}
       <button class="small-btn warn" type="button" id="btnWipe">Effacer les données</button>
       <p>Supprime l'historique, le trajet en cours et le total. Les données ne quittent jamais ce téléphone.</p>
     </div>
+    <p class="version" id="verText"></p>
   </section>
 
   <section class="perm" id="perm" hidden role="dialog" aria-labelledby="permTitle">
@@ -307,6 +309,7 @@ const nf1 = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 1, maximumFr
 const nf0 = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 });
 const dateFmt = new Intl.DateTimeFormat('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 const inFrame = (() => { try { return window.self !== window.top; } catch (e) { return true; } })();
+const NATIVE = window.CadranNative || null;   // present inside the Android app
 const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* ---------- State ---------- */
@@ -364,7 +367,8 @@ function onFix(f) {
 
   const T = S.trip;
   if (T.state !== 'running') return;
-  if (prev && kmh != null && kmh >= 3) { const dt = f.t - prev.t; if (dt > 0 && dt < 10000) T.movingMs += dt; }
+  // Speeds computed from two positions are noisier than the GPS's own speed: ask for more before counting time.
+  if (prev && kmh != null && kmh >= (fromGnss ? 3 : 8)) { const dt = f.t - prev.t; if (dt > 0 && dt < 10000) T.movingMs += dt; }
   if (kmh != null && kmh > T.maxKmh && (fromGnss ? f.acc <= 25 : f.acc <= 15)) T.maxKmh = kmh;
   if (f.acc > 35) return;                       // fix too vague to measure distance
   if (!T.anchor) { T.anchor = { lat: f.lat, lon: f.lon, t: f.t }; return; }
@@ -403,6 +407,7 @@ function startGeo() {
   }, { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
 }
 async function initGeo() {
+  if (NATIVE) { initNative(); return; }
   if (!('geolocation' in navigator)) { live.geoOff = true; inFrame ? startDemo('preview') : showPerm('unsupported'); return; }
   let state = 'prompt';
   try {
@@ -414,26 +419,69 @@ async function initGeo() {
   else if (state === 'denied') { live.geoOff = true; showPerm('denied'); }
   else showPerm('prompt');
 }
+
+/* Android app: positions come from the native GPS service, which keeps a buffer
+   while the screen is off or another app is in front. The page drains it here. */
+let nativePoll = null, nativeStarted = false;
+function initNative() {
+  if (nativePoll) return;
+  const tick = () => {
+    let st = 'prompt';
+    try { st = NATIVE.permission(); } catch (e) {}
+    if (st === 'granted') {
+      if (!nativeStarted) { nativeStarted = true; try { NATIVE.start(); } catch (e) {} }
+      live.geoOff = false;
+      if (permKind) hidePerm();
+      let fixes = [];
+      try { fixes = JSON.parse(NATIVE.drain()); } catch (e) {}
+      if (!demo) for (const f of fixes) onFix(f);
+    } else {
+      nativeStarted = false;
+      live.geoOff = st !== 'prompt';
+      live.offLabel = st === 'gpsoff' ? 'Localisation désactivée' : null;
+      if (!demo) showPerm(st === 'gpsoff' ? 'gpsoff' : st === 'coarse' ? 'coarse' : st === 'denied' ? 'nativeDenied' : 'prompt');
+    }
+  };
+  tick();
+  nativePoll = setInterval(tick, 500);
+}
+function nativeCall(name, ...args) { if (!NATIVE) return; try { return NATIVE[name](...args); } catch (e) {} }
+
 const PERM = {
-  prompt: ['Activer le GPS', 'La vitesse et la distance sont calculées à partir de la position du téléphone. Rien ne quitte l\'appareil.', true],
-  denied: ['Position bloquée', 'Autorise la position pour ce site dans Chrome : menu ⋮, Paramètres, Paramètres des sites, Position. Puis relance l\'appli.', false],
-  unsupported: ['GPS indisponible', 'Ce navigateur ne donne pas accès à la position. Ouvre l\'appli dans Chrome ou Samsung Internet.', false]
+  prompt: { t: 'Activer le GPS', p: 'La vitesse et la distance sont calculées à partir de la position du téléphone. Rien ne quitte l\'appareil.',
+    btn: 'Activer le GPS', act: () => { if (NATIVE) nativeCall('requestPermission'); else { hidePerm(); startGeo(); } } },
+  denied: { t: 'Position bloquée', p: 'Autorise la position pour ce site dans Chrome : menu ⋮, Paramètres, Paramètres des sites, Position. Puis relance l\'appli.' },
+  unsupported: { t: 'GPS indisponible', p: 'Ce navigateur ne donne pas accès à la position. Ouvre l\'appli dans Chrome ou Samsung Internet.' },
+  nativeDenied: { t: 'Position refusée', p: 'Dans les réglages de Cadran : Autorisations, Position, puis « Autoriser seulement si l\'appli est en cours d\'utilisation », avec la position exacte activée.',
+    btn: 'Ouvrir les réglages', act: () => nativeCall('openAppSettings') },
+  coarse: { t: 'Position approximative', p: 'Cadran a besoin de la position exacte pour mesurer la vitesse. Dans les réglages : Autorisations, Position, activer « Utiliser la position exacte ».',
+    btn: 'Ouvrir les réglages', act: () => nativeCall('openAppSettings') },
+  gpsoff: { t: 'Localisation désactivée', p: 'Active la localisation du téléphone (volet des réglages rapides) pour mesurer la vitesse.',
+    btn: 'Ouvrir les réglages', act: () => nativeCall('openLocationSettings') }
 };
+let permKind = null;
 function showPerm(kind) {
-  const [t, p, canAsk] = PERM[kind];
-  $('permTitle').textContent = t; $('permText').textContent = p;
-  $('btnPermGo').hidden = !canAsk;
+  if (permKind === kind && !$('perm').hidden) return;
+  const P = PERM[kind];
+  permKind = kind;
+  $('permTitle').textContent = P.t; $('permText').textContent = P.p;
+  $('btnPermGo').hidden = !P.btn;
+  if (P.btn) $('btnPermGo').textContent = P.btn;
   $('perm').hidden = false;
 }
-function hidePerm() { $('perm').hidden = true; }
+function hidePerm() { $('perm').hidden = true; permKind = null; }
 
 /* ---------- Wake lock ---------- */
 let wakeLock = null;
 async function keepAwake() {
+  if (NATIVE) { nativeCall('keepScreenOn', !!S.settings.wake); return; }
   if (!S.settings.wake || !('wakeLock' in navigator) || document.visibilityState !== 'visible' || wakeLock) return;
   try { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } catch (e) {}
 }
-function releaseWake() { if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; } }
+function releaseWake() {
+  if (NATIVE) { nativeCall('keepScreenOn', false); return; }
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+}
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); else persist(true); });
 window.addEventListener('pagehide', () => persist(true));
 document.addEventListener('pointerdown', keepAwake, { passive: true });
@@ -482,6 +530,7 @@ function mkBtn(label, cls, fn) {
 }
 function renderControls() {
   const c = $('controls'), T = S.trip;
+  nativeCall('setTripRunning', T.state === 'running' && !demo);
   c.textContent = '';
   if (T.state === 'running') {
     c.append(mkBtn('Pause', 'primary', tripPause), mkBtn('Enregistrer', '', tripSave));
@@ -607,7 +656,7 @@ function frame(now) {
 
   const g = $('gps');
   if (g.dataset.st !== st) g.dataset.st = st;
-  const gpsLabel = { demo: 'Démo', off: 'Position bloquée', wait: 'Recherche GPS', lost: 'Signal perdu' }[st]
+  const gpsLabel = { demo: 'Démo', off: live.offLabel || 'Position bloquée', wait: 'Recherche GPS', lost: 'Signal perdu' }[st]
     || `GPS ±${Math.max(1, Math.round(live.acc))} m`;
   setText('gpsText', gpsLabel);
 
@@ -661,7 +710,7 @@ function stopDemo() {
   live.lastFix = null; live.targetKmh = 0; live.lastFixAt = -1e9;
   $('demoBanner').hidden = true;
   renderControls(); buildDial(); syncSettings();
-  if (live.geoOff || watchId == null) initGeo();
+  if (!NATIVE && (live.geoOff || watchId == null)) initGeo();
 }
 
 /* ---------- Sheets ---------- */
@@ -707,10 +756,12 @@ $('btnExport').addEventListener('click', () => {
     const avg = h.movingMs > 10000 ? h.distM / 1000 / (h.movingMs / 3600000) : 0;
     rows.push([iso(h.start), iso(h.end), (h.distM / 1000).toFixed(1).replace('.', ','), Math.round(h.elapsedMs / 60000), Math.round(avg), h.maxKmh]);
   }
-  const csv = '﻿' + rows.map((r) => r.join(';')).join('\r\n');
+  const csv = '\ufeff' + rows.map((r) => r.join(';')).join('\r\n');
+  const fname = `cadran-trajets-${new Date().toISOString().slice(0, 10)}.csv`;
+  if (NATIVE) { nativeCall('shareFile', fname, csv); return; }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  a.download = `cadran-trajets-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = fname;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 });
@@ -741,13 +792,14 @@ $('btnWipe').addEventListener('click', (e) => armConfirm(e.currentTarget, 'Confi
 }));
 
 /* ---------- Location panel buttons ---------- */
-$('btnPermGo').addEventListener('click', () => { hidePerm(); startGeo(); });
+$('btnPermGo').addEventListener('click', () => { const P = PERM[permKind]; if (P && P.act) P.act(); });
 $('btnPermDemo').addEventListener('click', () => startDemo('demo'));
 
 /* ---------- Full screen and HUD ---------- */
-const canFull = !!(document.fullscreenEnabled && document.documentElement.requestFullscreen);
+const canFull = !!NATIVE || !!(document.fullscreenEnabled && document.documentElement.requestFullscreen);
 $('btnFull').hidden = !canFull;
 $('btnFull').addEventListener('click', () => {
+  if (NATIVE) { nativeCall('setFullscreen', !nativeCall('isFullscreen')); return; }
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   else document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
 });
@@ -758,6 +810,12 @@ $('btnHud').addEventListener('click', () => {
   keepAwake();
 });
 function exitHud() { $('hud').hidden = true; }
+// Android back button: close what is open first, then leave the app running in the background.
+window.__cadranBack = () => {
+  if (!$('hud').hidden) { exitHud(); return true; }
+  if (!$('sheetHistory').hidden || !$('sheetSettings').hidden) { closeSheets(); return true; }
+  return false;
+};
 $('hud').addEventListener('click', exitHud);
 
 /* ---------- Toast ---------- */
@@ -768,11 +826,17 @@ function toast(msg) {
 }
 
 /* ---------- Offline (installed app only) ---------- */
-if ('serviceWorker' in navigator && !inFrame && /^https:|^http:\/\/(localhost|127\.0\.0\.1)/.test(location.href)) {
+if (!NATIVE && 'serviceWorker' in navigator && !inFrame && /^https:|^http:\/\/(localhost|127\.0\.0\.1)/.test(location.href)) {
   window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
 }
 
 /* ---------- Boot ---------- */
+if (NATIVE) {
+  $('wakeHelp').textContent = 'Pendant un trajet, la mesure continue écran éteint ou avec une autre appli ouverte (Waze, Maps) ; une notification l\'indique.';
+  $('verText').textContent = 'Cadran pour Android, version ' + (nativeCall('version') || '');
+} else {
+  $('verText').textContent = 'Cadran, version web';
+}
 window.__cadran = { onFix, getState: () => S, startDemo, stopDemo };
 buildDial();
 renderControls();
