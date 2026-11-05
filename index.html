@@ -76,6 +76,8 @@ button{cursor:pointer}
 .speed{font-family:var(--font-display);font-weight:800;font-size:31cqi;line-height:.82;letter-spacing:-.01em;
   font-variant-numeric:tabular-nums;color:var(--ink);transition:color .2s}
 .unit{margin-top:2.2cqi;font-size:5cqi;color:var(--ink-dim);letter-spacing:.06em}
+.sats{margin-top:.6cqi;font-size:3.6cqi;color:var(--ink-dim);min-height:1.3em;font-variant-numeric:tabular-nums}
+#gpsText{overflow:hidden;text-overflow:ellipsis}
 .limit{margin-top:1.2cqi;font-size:3.8cqi;color:var(--over);opacity:.9;min-height:1.3em;font-variant-numeric:tabular-nums}
 
 /* Dial SVG parts */
@@ -162,6 +164,7 @@ button{cursor:pointer}
 .h-stats{grid-column:1;display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;color:var(--ink);font-variant-numeric:tabular-nums}
 .h-stats span{color:var(--ink-dim)}
 .h-del{grid-column:2;grid-row:1/span 3;align-self:center}
+.version.diag{border-top:0;padding-top:0}
 .version{margin:4px 0 0;padding-top:12px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-dim)}
 .empty{padding:22px 0 10px;color:var(--ink-dim);max-width:46ch}
 
@@ -210,6 +213,7 @@ button{cursor:pointer}
           <div class="speed" id="speed">--</div>
           <div class="unit">km/h</div>
           <div class="limit" id="limitText"></div>
+          <div class="sats" id="satText"></div>
         </div>
       </div>
     </div>
@@ -280,6 +284,7 @@ button{cursor:pointer}
       <p>Supprime l'historique, le trajet en cours et le total. Les données ne quittent jamais ce téléphone.</p>
     </div>
     <p class="version" id="verText"></p>
+    <p class="version diag" id="diagText"></p>
   </section>
 
   <section class="perm" id="perm" hidden role="dialog" aria-labelledby="permTitle">
@@ -349,12 +354,19 @@ const live = { targetKmh: 0, dispKmh: 0, lastFix: null, lastFixAt: -1e9, acc: nu
 
 /* One position fix: { lat, lon, acc (m), speed (m/s or null), t (ms epoch) } */
 function onFix(f) {
-  const prev = live.lastFix;
   live.lastFixAt = performance.now();
   live.acc = f.acc;
+  if (f.net) {
+    // Wi-Fi / cell-tower position from the Android app, sent only while the GPS is silent.
+    live.net = true;
+    if (f.speed != null && isFinite(f.speed) && f.speed >= 0 && f.acc <= 50) live.targetKmh = f.speed * 3.6 < 2 ? 0 : f.speed * 3.6;
+    return;
+  }
+  live.net = false;
+  const prev = live.lastFix;
   let kmh = (f.speed != null && isFinite(f.speed) && f.speed >= 0) ? f.speed * 3.6 : null;
   const fromGnss = kmh != null;
-  if (kmh == null && prev) {
+  if (kmh == null && prev && f.acc <= 20 && prev.acc <= 20) {
     const dt = (f.t - prev.t) / 1000;
     if (dt >= 0.8 && dt < 10) {
       const d = hav(prev, f);
@@ -428,6 +440,8 @@ function initNative() {
   const tick = () => {
     let st = 'prompt';
     try { st = NATIVE.permission(); } catch (e) {}
+    try { live.diag = JSON.parse(NATIVE.diag()); } catch (e) { live.diag = null; }
+    if (!$('sheetSettings').hidden) renderDiag();
     if (st === 'granted') {
       if (!nativeStarted) { nativeStarted = true; try { NATIVE.start(); } catch (e) {} }
       live.geoOff = false;
@@ -444,6 +458,14 @@ function initNative() {
   };
   tick();
   nativePoll = setInterval(tick, 500);
+}
+function renderDiag() {
+  const d = live.diag;
+  if (!d) { $('diagText').textContent = ''; return; }
+  const age = (s) => s < 0 ? 'jamais' : s < 60 ? `il y a ${s} s` : `il y a ${Math.round(s / 60)} min`;
+  $('diagText').textContent = `Diagnostic : service ${d.service ? 'actif' : 'arrêté'}, GPS ${d.gps ? 'à l\'écoute' : 'inactif'}, `
+    + `secours ${d.fallback || 'aucun'}, satellites ${d.used} sur ${d.visible}, dernier point GPS ${age(d.gpsAge)}, `
+    + `dernier point réseau ${age(d.fallbackAge)}.`;
 }
 function nativeCall(name, ...args) { if (!NATIVE) return; try { return NATIVE[name](...args); } catch (e) {} }
 
@@ -634,7 +656,7 @@ function frame(now) {
   let st;
   if (demo) st = 'demo';
   else if (live.geoOff) st = 'off';
-  else if (!live.lastFix) st = 'wait';
+  else if (live.lastFixAt < 0) st = 'wait';
   else if (age > 5) st = 'lost';
   else if (live.acc > 20) st = 'weak';
   else st = 'ok';
@@ -657,7 +679,10 @@ function frame(now) {
   const g = $('gps');
   if (g.dataset.st !== st) g.dataset.st = st;
   const gpsLabel = { demo: 'Démo', off: live.offLabel || 'Position bloquée', wait: 'Recherche GPS', lost: 'Signal perdu' }[st]
-    || `GPS ±${Math.max(1, Math.round(live.acc))} m`;
+    || `${live.net ? 'Position réseau' : 'GPS'} ±${Math.max(1, Math.round(live.acc))} m`;
+  const d = live.diag;
+  setText('satText', d && (st !== 'ok' || live.net) && st !== 'demo' && st !== 'off'
+    ? (d.visible > 0 ? `Satellites captés : ${d.used} sur ${d.visible}` : 'Aucun satellite capté') : '');
   setText('gpsText', gpsLabel);
 
   const T = S.trip;
@@ -686,7 +711,7 @@ function startDemo(mode) {
   demo = { real: S, t: 0, lat: 48.80, lon: 2.40, mode };
   S = { v: 1, settings: Object.assign({}, demo.real.settings), totalM: demo.real.totalM || 48213400, trip: freshTrip(), history: demo.real.history };
   S.trip.state = 'running'; S.trip.startedAt = Date.now(); S.trip.runningSince = Date.now();
-  live.lastFix = null; live.targetKmh = 0;
+  live.lastFix = null; live.targetKmh = 0; live.net = false;
   $('demoText').textContent = mode === 'preview'
     ? 'Aperçu : pas d\'accès au GPS ici, trajet simulé.'
     : 'Démo : trajet simulé, rien n\'est enregistré.';
@@ -772,7 +797,7 @@ function syncSettings() {
   $('setWake').checked = !!S.settings.wake;
   $('setTotal').value = nf1.format(Math.floor(S.totalM / 100) / 10);
 }
-$('btnSettings').addEventListener('click', () => { syncSettings(); openSheet('sheetSettings'); });
+$('btnSettings').addEventListener('click', () => { syncSettings(); if (NATIVE) renderDiag(); openSheet('sheetSettings'); });
 $('setAlert').addEventListener('change', (e) => { S.settings.alert = +e.target.value; if (demo) demo.real.settings.alert = S.settings.alert; persist(true); buildDial(); });
 $('setScale').addEventListener('change', (e) => { S.settings.scale = +e.target.value; if (demo) demo.real.settings.scale = S.settings.scale; persist(true); buildDial(); });
 $('setWake').addEventListener('change', (e) => { S.settings.wake = e.target.checked; if (demo) demo.real.settings.wake = S.settings.wake; persist(true); e.target.checked ? keepAwake() : releaseWake(); });

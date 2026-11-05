@@ -216,6 +216,9 @@ class MainActivity : ComponentActivity() {
         fun drain(): String = FixBuffer.drain()
 
         @JavascriptInterface
+        fun diag(): String = GpsInfo.json()
+
+        @JavascriptInterface
         fun setTripRunning(on: Boolean) {
             if (TripState.tripRunning == on) return
             TripState.tripRunning = on
