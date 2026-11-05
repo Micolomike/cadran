@@ -146,18 +146,25 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        AppState.foreground = true
+        DisplayConfig.load(this)
+        Floating.hide(this)
         if (hasFine()) startTracking()
         startBaro()
+        TrackingService.instance?.refreshNotification()
     }
 
     override fun onStop() {
         super.onStop()
         stopBaro()
-        if (!TripState.tripRunning) stopService(Intent(this, TrackingService::class.java))
+        AppState.foreground = false
+        // Keep measuring in the background during a trip, or for the widget and the floating speedometer.
+        if (!TripState.tripRunning && !DisplayConfig.keepRunning) stopService(Intent(this, TrackingService::class.java))
+        else TrackingService.instance?.onAppVisibilityChanged()
     }
 
     override fun onDestroy() {
-        if (isFinishing && !TripState.tripRunning) stopService(Intent(this, TrackingService::class.java))
+        if (isFinishing && !TripState.tripRunning && !DisplayConfig.keepRunning) stopService(Intent(this, TrackingService::class.java))
         web.destroy()
         super.onDestroy()
     }
@@ -259,6 +266,38 @@ class MainActivity : ComponentActivity() {
         /** Latest pressure in hPa and a counter of readings, as "p,count"; empty without a barometer. */
         @JavascriptInterface
         fun baro(): String = if (BaroLive.count == 0L) "" else "${BaroLive.pressure},${BaroLive.count}"
+
+        /** Units, alert, altimeter setting and skin colours for the widget and the floating speedometer. */
+        @JavascriptInterface
+        fun setDisplayConfig(json: String) {
+            DisplayConfig.apply(json)
+            DisplayConfig.save(this@MainActivity, json)
+            CadranWidget.render(applicationContext, GpsInfo.serviceRunning)
+            TrackingService.instance?.refreshNotification()
+        }
+
+        @JavascriptInterface
+        fun floatingPermission(): Boolean = Settings.canDrawOverlays(this@MainActivity)
+
+        @JavascriptInterface
+        fun requestFloatingPermission() {
+            runOnUiThread {
+                try {
+                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                } catch (e: Exception) {
+                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun floatingEnabled(): Boolean = DisplayConfig.floating
+
+        @JavascriptInterface
+        fun setFloating(on: Boolean) {
+            DisplayConfig.setFloating(this@MainActivity, on)
+            TrackingService.instance?.refreshNotification()
+        }
 
         @JavascriptInterface
         fun setBaroRate(hz: Int) {

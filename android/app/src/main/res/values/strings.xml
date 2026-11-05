@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Cadran</string>
+    <string name="widget_name">Cadran</string>
+    <string name="widget_description">Vitesse et altitude, tant que Cadran est actif</string>
 </resources>

@@ -26,6 +26,7 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -118,6 +119,7 @@ object FixBuffer {
 class TrackingService : Service() {
 
     private var registered = false
+    private val main = Handler(Looper.getMainLooper())
     private var thread: HandlerThread? = null
     private var altitudeConverter: Any? = null
 
@@ -142,14 +144,24 @@ class TrackingService : Service() {
             if (v < 250f || v > 1100f) return
             val p = GpsInfo.pressure
             GpsInfo.pressure = if (p <= 0f) v else p + 0.15f * (v - p)
+            Outputs.onData(this@TrackingService)
         }
         override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
     }
 
     private val gpsListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
-            GpsInfo.lastGpsAt = SystemClock.elapsedRealtime()
-            FixBuffer.add(location, fromNetwork = false, mslAltitude = mslAltitude(location))
+            val now = SystemClock.elapsedRealtime()
+            GpsInfo.lastGpsAt = now
+            val msl = mslAltitude(location)
+            FixBuffer.add(location, fromNetwork = false, mslAltitude = msl)
+            // Readings for the widget and the floating speedometer
+            Live.hasSpeed = location.hasSpeed()
+            Live.speedKmh = if (location.hasSpeed()) location.speed * 3.6 else 0.0
+            if (Live.speedKmh < 2) Live.speedKmh = 0.0
+            Live.lastGpsAt = now
+            Live.gpsAltitude = msl ?: if (location.hasAltitude()) location.altitude else Double.NaN
+            Outputs.onData(this@TrackingService)
         }
         override fun onProviderEnabled(provider: String) {}
         override fun onProviderDisabled(provider: String) {}
@@ -184,7 +196,45 @@ class TrackingService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+        DisplayConfig.load(this)
+    }
+
+    /** Called when Cadran goes to the background or comes back, or when an option changes. */
+    fun onAppVisibilityChanged() {
+        main.post {
+            Floating.sync(this)
+            if (!AppState.foreground && !TripState.tripRunning && !DisplayConfig.keepRunning) {
+                stopSelf()
+            } else {
+                refreshNotification()
+            }
+        }
+    }
+
+    fun refreshNotification() {
+        try {
+            NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification())
+        } catch (e: SecurityException) {
+            // Notifications not allowed: the service keeps running all the same.
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_HIDE_FLOATING -> {
+                DisplayConfig.setFloating(this, false)
+                onAppVisibilityChanged()
+                return START_NOT_STICKY
+            }
+            ACTION_STOP -> {
+                main.post { Floating.hide(this) }
+                stopSelf()
+                return START_NOT_STICKY
+            }
+        }
         val type = if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
         try {
             ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), type)
@@ -196,6 +246,8 @@ class TrackingService : Service() {
         }
         GpsInfo.serviceRunning = true
         startListening()
+        main.post { Floating.sync(this) }
+        CadranWidget.render(applicationContext, running = true)
         return START_NOT_STICKY
     }
 
@@ -259,6 +311,10 @@ class TrackingService : Service() {
         GpsInfo.fallbackProvider = null
         GpsInfo.satellitesUsed = 0
         GpsInfo.satellitesVisible = 0
+        Live.hasSpeed = false
+        instance = null
+        Floating.hide(this)
+        CadranWidget.render(applicationContext, running = false)
         super.onDestroy()
     }
 
@@ -276,13 +332,32 @@ class TrackingService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val running = TripState.tripRunning
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val b = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_cadran)
             .setContentTitle(if (running) "Trajet en cours" else "Cadran")
             .setContentText(
-                if (running) "La distance est mesurée, même écran éteint."
-                else "GPS actif tant que Cadran est ouvert."
+                when {
+                    running -> "La distance est mesurée, même écran éteint."
+                    AppState.foreground -> "GPS actif tant que Cadran est ouvert."
+                    DisplayConfig.floating -> "Compteur flottant actif par-dessus les autres applis."
+                    else -> "Vitesse et altitude actives en arrière-plan pour le widget."
+                }
             )
+        if (DisplayConfig.floating) {
+            val hide = PendingIntent.getService(
+                this, 2, Intent(this, TrackingService::class.java).setAction(ACTION_HIDE_FLOATING),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            b.addAction(0, "Masquer le compteur flottant", hide)
+        }
+        if (!running) {
+            val stop = PendingIntent.getService(
+                this, 3, Intent(this, TrackingService::class.java).setAction(ACTION_STOP),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            b.addAction(0, "Arrêter", stop)
+        }
+        return b
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)
@@ -294,5 +369,10 @@ class TrackingService : Service() {
     companion object {
         const val NOTIFICATION_ID = 7
         const val CHANNEL_ID = "cadran_gps"
+        const val ACTION_HIDE_FLOATING = "fr.micolomike.cadran.HIDE_FLOATING"
+        const val ACTION_STOP = "fr.micolomike.cadran.STOP"
+
+        @Volatile
+        var instance: TrackingService? = null
     }
 }

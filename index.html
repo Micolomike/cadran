@@ -988,7 +988,7 @@ button{cursor:pointer}
 .small-btn.warn{border-color:var(--over);color:var(--over)}
 .switch{position:relative;width:52px;height:30px;flex:none}
 .switch input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer}
-.switch span{position:absolute;inset:0;border-radius:99px;background:var(--ground);border:1px solid var(--line);transition:background .15s}
+.switch span{position:absolute;inset:0;pointer-events:none;border-radius:99px;background:var(--ground);border:1px solid var(--line);transition:background .15s}
 .switch span::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:var(--ink-dim);transition:transform .15s,background .15s}
 .switch input:checked+span{background:var(--accent-deep);border-color:var(--accent)}
 .switch input:checked+span::after{transform:translateX(22px);background:var(--ink)}
@@ -1214,6 +1214,20 @@ button{cursor:pointer}
       <div class="inline"><input type="text" class="short" id="setQnh" inputmode="decimal" autocomplete="off"><span id="qnhUnit">hPa</span></div>
       <p>Pression ramenée au niveau de la mer, donnée par la météo aéronautique (METAR) du terrain le plus proche.</p>
     </div>
+    <div class="row" id="floatRow" hidden>
+      <label for="setFloating">Compteur flottant</label>
+      <span class="switch"><input type="checkbox" id="setFloating"><span></span></span>
+      <p id="floatHelp">Une pastille avec la vitesse et l'altitude reste visible par-dessus les autres applis (Waze, Maps…). Déplace-la du doigt, touche-la pour revenir dans Cadran, appui long pour la masquer.</p>
+    </div>
+    <div class="row" id="bgRow" hidden>
+      <label for="setBackground">En arrière-plan</label>
+      <select id="setBackground"><option value="trip">Pendant un trajet</option><option value="always">Toujours</option></select>
+      <p>« Toujours » garde la vitesse et l'altitude à jour quand tu passes sur une autre appli, pour le widget. La notification de Cadran permet d'arrêter. Consomme davantage de batterie.</p>
+    </div>
+    <div class="row" id="widgetRow" hidden>
+      <span class="row-title">Widget</span><span></span>
+      <p>Sur l'écran d'accueil : appui long sur un espace vide, Widgets, puis Cadran. Il affiche la vitesse et l'altitude tant que Cadran est actif : appli ouverte, trajet en cours, compteur flottant ou arrière-plan « Toujours ».</p>
+    </div>
     <div class="row">
       <label for="setWake">Garder l'écran allumé</label>
       <span class="switch"><input type="checkbox" id="setWake"><span></span></span>
@@ -1336,7 +1350,7 @@ function freshTrip() {
 }
 function defaultSettings() {
   return { alert: 0, scales: { kmh: 200, mph: 120, kt: 160 }, wake: true, units: 'kmh', altUnit: 'm', skin: 'nuit', view: 'dial', dialMode: 'speed',
-    altMode: 'auto', qnh: 1013.25, pUnit: 'hpa', baroHz: 0, swipeHint: false };
+    altMode: 'auto', qnh: 1013.25, pUnit: 'hpa', baroHz: 0, background: 'trip', swipeHint: false };
 }
 function defaults() { return { v: 2, settings: defaultSettings(), totalM: 0, trip: freshTrip(), history: [], altCal: null }; }
 function load() {
@@ -1478,7 +1492,10 @@ function updateAltitude(f, isNet) {
     if (ALT.off == null) { const c = freshCal(); if (c) { ALT.off = c.off; ALT.n = 30; } }
     const target = f.alt - baroAlt(p, P0), k = Math.max(0.03, 1 / (++ALT.n));
     ALT.off = ALT.off == null ? target : ALT.off + k * (target - ALT.off);
-    if (!demo) S.altCal = { off: ALT.off, t: Date.now() };
+    if (!demo) {
+      S.altCal = { off: ALT.off, t: Date.now() };
+      if (lastSentOff == null || Math.abs(ALT.off - lastSentOff) > 0.5 || Date.now() - lastSentAt > 30000) sendDisplayConfig();
+    }
   }
   if (mode !== 'gps' && baroLive()) return;          // the live barometer already drives the display
   let a = null, src = '';
@@ -1654,6 +1671,20 @@ function renderDiag() {
     + `dernier point réseau ${age(d.fallbackAge)}, altitude ${ALT.src || 'aucune'}.`;
 }
 function nativeCall(name, ...args) { if (!NATIVE) return; try { return NATIVE[name](...args); } catch (e) {} }
+/* Units, alert, altimeter setting and skin colours, so the widget and the floating speedometer match. */
+let lastSentOff = null, lastSentAt = 0;
+function sendDisplayConfig() {
+  if (!NATIVE) return;
+  const u = U(), au = AU();
+  lastSentOff = ALT.off; lastSentAt = Date.now();
+  nativeCall('setDisplayConfig', JSON.stringify({
+    speedK: u.k, speedUnit: u.speed, altK: au.ak, altUnit: au.alt,
+    scaleKmh: (S.settings.scales[S.settings.units] || u.scales[1]) / u.k, alertKmh: +S.settings.alert || 0,
+    altMode: S.settings.altMode, qnh: +S.settings.qnh || P0, altOffset: ALT.off == null ? null : ALT.off,
+    background: S.settings.background || 'trip',
+    colors: { ground: tok('--ground'), dial: tok('--dial'), accent: tok('--accent'), ink: tok('--ink'), inkDim: tok('--ink-dim'), over: tok('--over'), line: tok('--line') }
+  }));
+}
 
 const PERM = {
   prompt: { t: 'Activer le GPS', p: 'La vitesse et la distance sont calculées à partir de la position du téléphone. Rien ne quitte l\'appareil.',
@@ -2379,10 +2410,12 @@ $('btnExport').addEventListener('click', () => {
 
 /* ---------- Settings ---------- */
 function renderSkins() {
-  const box = $('skins'); box.textContent = '';
+  const box = $('skins');
+  // Only update the selection when the buttons exist: rebuilding them under the finger would lose the tap.
+  if (box.children.length) { for (const b of box.children) b.setAttribute('aria-pressed', String(S.settings.skin === b.dataset.skin)); return; }
   for (const [id, sk] of Object.entries(SKINS)) {
     const b = document.createElement('button');
-    b.type = 'button'; b.className = 'skin'; b.setAttribute('aria-pressed', String(S.settings.skin === id));
+    b.type = 'button'; b.className = 'skin'; b.dataset.skin = id; b.setAttribute('aria-pressed', String(S.settings.skin === id));
     b.innerHTML = `<span class="swatch" style="--sw-ground:${sk.sw[0]};--sw-face:${sk.sw[1]};--sw-acc:${sk.sw[2]};--sw-needle:${sk.sw[3]}"></span><span></span>`;
     b.lastChild.textContent = sk.name;
     b.addEventListener('click', () => { applySkin(id); renderSkins(); });
@@ -2398,6 +2431,7 @@ function applySkin(id) {
   if (MAPV.line) { MAPV.line.setStyle({ color: tok('--accent') }); MAPV.me.setStyle({ fillColor: tok('--accent'), color: tok('--ground') }); }
   const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = tok('--ground');
   nativeCall('setBarColor', tok('--ground'));
+  sendDisplayConfig();
 }
 function renderScaleOptions() {
   const sel = $('setScale'), u = U(); sel.textContent = '';
@@ -2417,6 +2451,9 @@ function syncSettings() {
   $('setPUnit').value = S.settings.pUnit;
   $('setBaroHz').value = String(S.settings.baroHz || 0);
   $('baroRow').hidden = !NATIVE;
+  $('floatRow').hidden = $('bgRow').hidden = $('widgetRow').hidden = !NATIVE;
+  $('setBackground').value = S.settings.background || 'trip';
+  renderFloating();
   $('baroHelp').textContent = 'Le baromètre met l\'altitude à jour même sans GPS. Plus la fréquence est basse, moins la batterie est sollicitée.'
     + (BARO.rate > 0 ? ` Mesuré en ce moment : ${nf0.format(BARO.rate)} fois par seconde.` : '');
   $('qnhRow').hidden = S.settings.altMode !== 'qnh';
@@ -2430,28 +2467,54 @@ function syncSettings() {
 const parseNum = (s) => Number(String(s).replace(/\s/g, '').replace(',', '.'));
 $('btnSettings').addEventListener('click', () => { syncSettings(); if (NATIVE) renderDiag(); openSheet('sheetSettings'); });
 $('setUnits').addEventListener('change', (e) => {
-  S.settings.units = e.target.value; persist(true); applyUnitLabels(); buildDial(); syncSettings(); chartsDirty = true;
+  S.settings.units = e.target.value; persist(true); applyUnitLabels(); buildDial(); syncSettings(); chartsDirty = true; sendDisplayConfig();
 });
 $('setAltUnit').addEventListener('change', (e) => {
-  S.settings.altUnit = e.target.value; persist(true); applyUnitLabels(); buildDial(); chartsDirty = true;
+  S.settings.altUnit = e.target.value; persist(true); applyUnitLabels(); buildDial(); chartsDirty = true; sendDisplayConfig();
 });
-$('setScale').addEventListener('change', (e) => { S.settings.scales[S.settings.units] = +e.target.value; persist(true); buildDial(); });
+$('setScale').addEventListener('change', (e) => { S.settings.scales[S.settings.units] = +e.target.value; persist(true); buildDial(); sendDisplayConfig(); });
 $('setAlert').addEventListener('change', (e) => {
   const raw = e.target.value.trim(), v = parseNum(raw);
   if (!raw) S.settings.alert = 0;
   else if (isFinite(v) && v > 0 && v < 1000) S.settings.alert = v / U().k;
   else { toast('Entre une vitesse, par exemple 90'); syncSettings(); return; }
-  persist(true); buildDial(); syncSettings(); chartsDirty = true;
+  persist(true); buildDial(); syncSettings(); chartsDirty = true; sendDisplayConfig();
 });
 function resetAltimeter() { Object.assign(ALT, { off: null, n: 0, gpsEma: null, value: null, src: '', hist: [], vs: 0, lastT: 0 }); live.dispAlt = null; S.trip.altRef = null; }
 // Changing the altitude source makes the reading jump: start the climb/descent count again from the new value.
-$('setAltMode').addEventListener('change', (e) => { S.settings.altMode = e.target.value; resetAltimeter(); persist(true); syncSettings(); buildDial(); });
+$('setAltMode').addEventListener('change', (e) => { S.settings.altMode = e.target.value; resetAltimeter(); persist(true); syncSettings(); buildDial(); sendDisplayConfig(); });
+let floatPending = false;
+function renderFloating() {
+  if (!NATIVE) return;
+  const perm = !!nativeCall('floatingPermission');
+  $('setFloating').checked = !!nativeCall('floatingEnabled') && perm;
+  $('floatHelp').textContent = 'Une pastille avec la vitesse et l\'altitude reste visible par-dessus les autres applis (Waze, Maps…). '
+    + 'Déplace-la du doigt, touche-la pour revenir dans Cadran, appui long pour la masquer.'
+    + (perm ? '' : ' Android demandera d\'autoriser « Afficher par-dessus d\'autres applis » pour Cadran.');
+}
+$('setFloating').addEventListener('change', (e) => {
+  if (e.target.checked && !nativeCall('floatingPermission')) {
+    e.target.checked = false; floatPending = true;
+    toast('Active « Autoriser l\'affichage par-dessus » pour Cadran, puis reviens');
+    nativeCall('requestFloatingPermission');
+    return;
+  }
+  nativeCall('setFloating', e.target.checked);
+  if (e.target.checked) toast('La pastille apparaîtra quand tu quitteras Cadran');
+  renderFloating();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !NATIVE) return;
+  if (floatPending && nativeCall('floatingPermission')) { floatPending = false; nativeCall('setFloating', true); toast('Compteur flottant activé'); }
+  if (!$('sheetSettings').hidden) renderFloating();
+});
+$('setBackground').addEventListener('change', (e) => { S.settings.background = e.target.value; persist(true); sendDisplayConfig(); });
 $('setPUnit').addEventListener('change', (e) => { S.settings.pUnit = e.target.value; persist(true); syncSettings(); });
 $('setBaroHz').addEventListener('change', (e) => { S.settings.baroHz = +e.target.value; persist(true); nativeCall('setBaroRate', S.settings.baroHz); syncSettings(); });
 $('setQnh').addEventListener('change', (e) => {
   let v = parseNum(e.target.value);
   if (S.settings.pUnit === 'inhg' && isFinite(v)) v = v * INHG;
-  if (isFinite(v) && v >= 900 && v <= 1080) { S.settings.qnh = v; S.trip.altRef = null; ALT.hist = []; persist(true); buildDial(); toast('QNH ' + fmtP(v) + ' ' + pUnitLabel()); }
+  if (isFinite(v) && v >= 900 && v <= 1080) { S.settings.qnh = v; S.trip.altRef = null; ALT.hist = []; persist(true); buildDial(); sendDisplayConfig(); toast('QNH ' + fmtP(v) + ' ' + pUnitLabel()); }
   else toast(S.settings.pUnit === 'inhg' ? 'Entre un QNH entre 26,58 et 31,89 inHg, par exemple 29,92' : 'Entre un QNH entre 900 et 1080 hPa, par exemple 1013');
   syncSettings();
 });
@@ -2498,7 +2561,7 @@ function setQnh(hpa) {
   if (S.settings.altMode !== 'qnh') { S.settings.altMode = 'qnh'; buildDial(); }
   S.trip.altRef = null; ALT.hist = []; ALT.lastT = 0;
   if (BARO.p != null) onPressure(BARO.p, Date.now());
-  persist(true); renderQnh();
+  persist(true); renderQnh(); sendDisplayConfig();
 }
 // Hold + or − to turn the knob continuously.
 for (const [id, dir] of [['qMinus', -1], ['qPlus', 1]]) {
@@ -2509,7 +2572,7 @@ for (const [id, dir] of [['qMinus', -1], ['qPlus', 1]]) {
   $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); nudgeQnh(dir); } });
 }
 $('qStd').addEventListener('click', () => setQnh(P0));
-$('qAuto').addEventListener('click', () => { S.settings.altMode = 'auto'; resetAltimeter(); persist(true); buildDial(); renderQnh(); });
+$('qAuto').addEventListener('click', () => { S.settings.altMode = 'auto'; resetAltimeter(); persist(true); buildDial(); renderQnh(); sendDisplayConfig(); });
 for (const b of document.querySelectorAll('[data-pu]')) b.addEventListener('click', () => { S.settings.pUnit = b.dataset.pu; persist(true); renderQnh(); syncSettings(); });
 $('kwin').addEventListener('click', () => { renderQnh(); openSheet('sheetQnh'); });
 
@@ -2561,6 +2624,7 @@ window.__cadran = { onFix, getState: () => S, getTrack: () => track, getAlt: () 
 document.documentElement.dataset.skin = S.settings.skin;
 nativeCall('setBarColor', tok('--ground'));
 nativeCall('setBaroRate', +S.settings.baroHz || 0);
+sendDisplayConfig();
 applyUnitLabels();
 buildDial();
 renderControls();
