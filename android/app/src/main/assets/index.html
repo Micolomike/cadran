@@ -945,8 +945,15 @@ button{cursor:pointer}
 .trip-km small{font-family:var(--font-ui);font-weight:400;font-size:15px;color:var(--ink-dim);margin-left:4px}
 .total{text-align:right}
 .drums{display:inline-flex;gap:2px;padding:3px;border-radius:6px;background:var(--drum-edge);border:1px solid var(--line)}
-.drum{width:19px;height:30px;display:grid;place-items:center;border-radius:2px;font-family:var(--font-display);font-weight:800;font-size:22px;
+.drum{--dh:30px;position:relative;overflow:hidden;width:19px;height:var(--dh);border-radius:2px;font-family:var(--font-display);font-weight:800;font-size:22px;
   color:var(--drum-ink);background:linear-gradient(var(--drum-edge),var(--drum-mid) 32%,var(--drum-mid) 68%,var(--drum-edge))}
+/* Each drum is a reel: when its digit changes, the next number rolls up from below, as on a mechanical odometer. */
+.reel{position:absolute;left:0;right:0;top:0;display:flex;flex-direction:column}
+.reel b{height:var(--dh);display:grid;place-items:center;font:inherit;line-height:1}
+.reel.roll{transition:transform .45s cubic-bezier(.35,.05,.25,1)}
+/* Shading over the digits gives the curve of the cylinder. */
+.drum::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(rgba(0,0,0,.5),rgba(0,0,0,0) 30%,rgba(0,0,0,0) 70%,rgba(0,0,0,.5))}
 :root[data-skin="aviation"] .drum,:root[data-skin="train"] .drum,:root[data-skin="retro"] .drum{font-weight:700;font-size:19px}
 .drum.tenth{color:var(--btn-ink);background:linear-gradient(var(--accent-deep),var(--accent) 32%,var(--accent) 68%,var(--accent-deep));margin-left:3px}
 .total small{display:block;margin-top:3px;font-size:12px;color:var(--ink-dim)}
@@ -2002,18 +2009,39 @@ function fmtDur(ms) {
   if (min < 60) return `${min} min`;
   return `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')}`;
 }
+const DRUM = { els: [], tenths: null };
+function setDrum(el, d, from) {
+  const reel = el.firstChild;
+  clearTimeout(el._roll);
+  reel.classList.remove('roll'); reel.style.transform = '';
+  if (from == null) { reel.innerHTML = `<b>${d}</b>`; return; }
+  reel.innerHTML = `<b>${from}</b><b>${d}</b>`;
+  void reel.offsetHeight;                                  // start from the old digit
+  reel.classList.add('roll');
+  reel.style.transform = 'translateY(calc(-1 * var(--dh)))';
+  el._roll = setTimeout(() => { reel.classList.remove('roll'); reel.style.transform = ''; reel.innerHTML = `<b>${d}</b>`; }, 480);
+}
 function renderDrums() {
   const tenths = Math.floor(dst(S.totalM) * 10);
-  const intPart = Math.floor(tenths / 10), dec = tenths % 10;
-  const digits = String(intPart).padStart(6, '0');
-  const key = digits + dec;
-  if (cache.drums === key) return;
-  cache.drums = key;
+  const digits = String(Math.floor(tenths / 10)).padStart(6, '0') + (tenths % 10);
+  if (cache.drums === digits) return;
+  const prev = cache.drums, prevTenths = DRUM.tenths;
+  cache.drums = digits; DRUM.tenths = tenths;
   const box = $('drums');
-  box.textContent = '';
-  for (const ch of digits) { const s = document.createElement('span'); s.className = 'drum'; s.textContent = ch; box.appendChild(s); }
-  const t = document.createElement('span'); t.className = 'drum tenth'; t.textContent = dec; box.appendChild(t);
   box.setAttribute('aria-label', `Compteur total ${nf1.format(tenths / 10)} ${U().dist}`);
+  if (!prev || prev.length !== digits.length || DRUM.els.length !== digits.length) {
+    box.textContent = ''; DRUM.els = [];
+    for (let i = 0; i < digits.length; i++) {
+      const el = document.createElement('span');
+      el.className = 'drum' + (i === digits.length - 1 ? ' tenth' : '');
+      const reel = document.createElement('span'); reel.className = 'reel'; reel.innerHTML = `<b>${digits[i]}</b>`;
+      el.appendChild(reel); box.appendChild(el); DRUM.els.push(el);
+    }
+    return;
+  }
+  // Roll only for the normal count while driving; a correction typed in the settings changes at once.
+  const roll = !reduceMotion && prevTenths != null && tenths > prevTenths && tenths - prevTenths <= 20 && document.visibilityState === 'visible';
+  for (let i = 0; i < digits.length; i++) if (digits[i] !== prev[i]) setDrum(DRUM.els[i], digits[i], roll ? prev[i] : null);
 }
 function applyUnitLabels() {
   const u = U();
