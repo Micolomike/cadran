@@ -909,7 +909,11 @@ button{cursor:pointer}
 .app.over .led{background:var(--led-c);box-shadow:0 0 1.4cqi var(--led-c);animation:blink .5s steps(2) infinite}
 
 /* Charts view */
-.view-charts{display:grid;grid-template-rows:minmax(0,1fr) minmax(0,1fr);gap:10px}
+.view-charts{display:grid;grid-template-rows:auto minmax(0,1fr) minmax(0,1fr);gap:10px}
+.spans{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:1px}
+.spans::-webkit-scrollbar{display:none}
+.span-btn{flex:none;height:32px;padding-inline:12px;border-radius:99px;border:1px solid var(--line);background:var(--dial);color:var(--ink-dim);font-weight:600;font-size:13px;white-space:nowrap}
+.span-btn[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--btn-ink)}
 .chart{min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);gap:4px;padding:10px 12px 8px;border:1px solid var(--line);border-radius:14px;background:var(--dial)}
 .chart-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .chart-title{font-weight:600;font-size:14px}
@@ -1094,6 +1098,7 @@ button{cursor:pointer}
     </section>
 
     <section class="view view-charts" id="viewCharts" role="tabpanel" aria-labelledby="tabCharts" hidden>
+      <div class="spans" id="spans" role="group" aria-label="Durée affichée"></div>
       <div class="chart">
         <div class="chart-head"><span class="chart-title" id="chSpeedTitle">Vitesse</span><span class="chart-stats" id="chSpeedStats"></span></div>
         <canvas id="chSpeed" aria-label="Courbe de vitesse"></canvas>
@@ -1190,6 +1195,11 @@ button{cursor:pointer}
       <label for="setAlert">Alerte de vitesse</label>
       <div class="inline"><input type="text" class="short" id="setAlert" inputmode="numeric" autocomplete="off" placeholder="Aucune"><span id="alertUnit">km/h</span></div>
       <p>Au-dessus de cette vitesse, le cadran passe à la couleur d'alerte. Laisser vide pour désactiver.</p>
+    </div>
+    <div class="row">
+      <label for="setChartSpan">Durée des courbes</label>
+      <select id="setChartSpan"></select>
+      <p>Auto : tout le trajet pendant un enregistrement, sinon l'historique disponible, jusqu'à une heure.</p>
     </div>
     <div class="row">
       <label for="setAltMode">Altimètre</label>
@@ -1350,7 +1360,7 @@ function freshTrip() {
 }
 function defaultSettings() {
   return { alert: 0, scales: { kmh: 200, mph: 120, kt: 160 }, wake: true, units: 'kmh', altUnit: 'm', skin: 'nuit', view: 'dial', dialMode: 'speed',
-    altMode: 'auto', qnh: 1013.25, pUnit: 'hpa', baroHz: 0, background: 'trip', swipeHint: false };
+    altMode: 'auto', qnh: 1013.25, pUnit: 'hpa', baroHz: 0, background: 'trip', chartSpan: 'auto', swipeHint: false };
 }
 function defaults() { return { v: 2, settings: defaultSettings(), totalM: 0, trip: freshTrip(), history: [], altCal: null }; }
 function load() {
@@ -1590,11 +1600,12 @@ function recordPoint(f, kmh) {
   saveCurrentTrack();
 }
 /* Rolling five minutes, shown in the charts when no trip is recorded. */
+const LIVE_KEEP = 3600000;       // one hour of history at one point per second, for the charts
 function pushLive(t) {
   const b = live.buf, last = b[b.length - 1];
   if (last && t - last.t < 1000) return;
   b.push({ t, v: live.targetKmh, a: ALT.value });
-  while (b.length && t - b[0].t > 300000) b.shift();
+  while (b.length && t - b[0].t > LIVE_KEEP) b.shift();
   chartsDirty = true;
 }
 
@@ -2105,7 +2116,7 @@ function drawChart(cv, pts, o) {
   const span = Math.max(o.minSpan, y1 - y0), stepY = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000].find((s) => span / s <= 4) || 1000;
   if (o.yMin == null) y0 = Math.floor((y0 - span * 0.08) / stepY) * stepY;
   y1 = Math.max(y0 + stepY, Math.ceil((y1 + span * 0.08) / stepY) * stepY);
-  const x0 = pts[0].x, x1 = Math.max(pts[pts.length - 1].x, x0 + 1e-6);
+  const x0 = o.xMin != null ? o.xMin : pts[0].x, x1 = Math.max(o.xMax != null ? o.xMax : pts[pts.length - 1].x, x0 + 1e-6);
   const L = 34, Rr = 6, Tt = 6, B = 16, W = w - L - Rr, H = h - Tt - B;
   const X = (x) => L + (x - x0) / (x1 - x0) * W, Y = (y) => Tt + (1 - (y - y0) / (y1 - y0)) * H;
   // grid + y labels
@@ -2170,25 +2181,66 @@ function chartStats(points) {
   return { u: U(), vMax, aMin, aMax };
 }
 function statHtml(pairs) { return pairs.map(([k, v]) => `<span>${k} <b>${v}</b></span>`).join(''); }
+const SPANS = [['auto', 'Auto'], [60, '1 min'], [300, '5 min'], [900, '15 min'], [1800, '30 min'], [3600, '1 h']];
+function spanLabel(sec) { return sec >= 3600 ? (sec === 3600 ? 'dernière heure' : `${nf0.format(sec / 3600)} dernières heures`) : sec >= 120 ? `${nf0.format(sec / 60)} dernières minutes` : sec >= 60 ? 'dernière minute' : `${nf0.format(sec)} dernières secondes`; }
+function renderSpans() {
+  const box = $('spans'), cur = String(S.settings.chartSpan || 'auto');
+  if (!box.children.length) for (const [v, l] of SPANS) {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'span-btn'; b.dataset.span = v; b.textContent = l;
+    b.addEventListener('click', () => setChartSpan(v)); box.appendChild(b);
+  }
+  for (const b of box.children) b.setAttribute('aria-pressed', String(b.dataset.span === cur));
+  const sel = $('setChartSpan');
+  if (!sel.options.length) for (const [v, l] of SPANS) { const o = document.createElement('option'); o.value = v; o.textContent = v === 'auto' ? 'Auto (s\'adapte)' : l; sel.appendChild(o); }
+  sel.value = cur;
+}
+function setChartSpan(v) { S.settings.chartSpan = v === 'auto' ? 'auto' : +v; persist(true); renderSpans(); chartsDirty = true; drawLiveCharts(); }
+/* Points for the charts. A fixed duration shows the last N minutes (one point per second when the app
+   has been open long enough, else the trip's recorded points). Auto shows the whole trip while recording,
+   otherwise all the recent history. */
+function chartWindow() {
+  const T = S.trip, recording = T.state !== 'idle' && track.length > 0, span = S.settings.chartSpan;
+  const nowT = Date.now();
+  if (span === 'auto' || !span) {
+    if (recording) return { mode: 'trip', points: track };
+    const b = live.buf, sec = b.length ? Math.max(60, Math.ceil((b[b.length - 1].t - b[0].t) / 60000) * 60) : 300;
+    return { mode: 'window', points: b, sec, end: b.length ? b[b.length - 1].t : nowT };
+  }
+  const from = nowT - span * 1000, b = live.buf;
+  let pts = b.filter((p) => p.t >= from);
+  if (recording && (!b.length || b[0].t > from + 5000)) {
+    const tp = track.filter((p) => p.t >= from);
+    if (tp.length && (!pts.length || tp[0].t < pts[0].t)) pts = tp.concat(pts.filter((p) => p.t > tp[tp.length - 1].t));
+  }
+  return { mode: 'window', points: pts, sec: span, end: nowT };
+}
 function drawLiveCharts(now) {
   lastChartDraw = now || performance.now(); chartsDirty = false;
-  const T = S.trip, recording = T.state !== 'idle' && track.length > 0;
-  const points = recording ? track : live.buf;
-  const { speed, altS, u } = seriesFor(points, !recording);
+  const T = S.trip, w = chartWindow(), points = w.points, u = U(), au = AU();
   const alertD = spd(+S.settings.alert || 0);
-  drawChart($('chSpeed'), speed, { minSpan: 20, yMin: 0, ref: alertD || null, empty: 'La courbe se trace dès que le GPS donne une vitesse.',
-    xFmt: recording ? minFmt : (x) => x === 0 ? 'maintenant' : `${nf0.format(x)} min` });
-  drawChart($('chAlt'), altS, { minSpan: AU().alt === 'm' ? 20 : 60, empty: 'Altitude en attente du baromètre ou du GPS.',
-    xFmt: recording ? (x) => `${nf1.format(x)} ${u.dist}` : (x) => x === 0 ? 'maintenant' : `${nf0.format(x)} min` });
-  setText('chSpeedTitle', recording ? 'Vitesse pendant le trajet' : 'Vitesse, 5 dernières minutes');
-  setText('chAltTitle', recording ? 'Profil d\'altitude' : 'Altitude, 5 dernières minutes');
+  let speed, altS, xS, xA, rng = {};
+  if (w.mode === 'trip') {
+    ({ speed, altS } = seriesFor(points, false));
+    xS = minFmt; xA = (x) => `${nf1.format(x)} ${u.dist}`;
+  } else {
+    const m = (t) => (t - w.end) / 60000;
+    speed = points.map((p) => ({ x: m(p.t), y: p.v == null ? null : spd(p.v) }));
+    altS = points.map((p) => ({ x: m(p.t), y: p.a == null ? null : alt(p.a) }));
+    const short = w.sec <= 120;
+    xS = xA = (x) => Math.abs(x) < 1e-6 ? 'maintenant' : short ? `${nf0.format(x * 60)} s` : `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 }).format(x)} min`;
+    rng = { xMin: -w.sec / 60, xMax: 0 };
+  }
+  drawChart($('chSpeed'), speed, Object.assign({ minSpan: 20, yMin: 0, ref: alertD || null, empty: 'La courbe se trace dès que le GPS donne une vitesse.', xFmt: xS }, rng));
+  drawChart($('chAlt'), altS, Object.assign({ minSpan: au.alt === 'm' ? 20 : 60, empty: 'Altitude en attente du baromètre ou du GPS.', xFmt: xA }, rng));
+  setText('chSpeedTitle', w.mode === 'trip' ? 'Vitesse pendant le trajet' : 'Vitesse, ' + spanLabel(w.sec));
+  setText('chAltTitle', w.mode === 'trip' ? 'Profil d\'altitude' : 'Altitude, ' + spanLabel(w.sec));
   const cs = chartStats(points);
-  $('chSpeedStats').innerHTML = statHtml(recording
+  $('chSpeedStats').innerHTML = statHtml(w.mode === 'trip'
     ? [['Moy.', `${T.movingMs > 10000 ? nf0.format(spd(T.distM / 1000 / (T.movingMs / 3600000))) : 0}`], ['Max', `${nf0.format(spd(T.maxKmh))} ${u.speed}`]]
     : [['Max', `${nf0.format(spd(cs.vMax))} ${u.speed}`]]);
-  $('chAltStats').innerHTML = statHtml(recording
-    ? [['D+', `${nf0.format(alt(T.gainM))}`], ['D−', `${nf0.format(alt(T.lossM))} ${AU().alt}`]]
-    : cs.aMin == null ? [] : [['Min', nf0.format(alt(cs.aMin))], ['Max', `${nf0.format(alt(cs.aMax))} ${AU().alt}`]]);
+  $('chAltStats').innerHTML = statHtml(w.mode === 'trip'
+    ? [['D+', `${nf0.format(alt(T.gainM))}`], ['D−', `${nf0.format(alt(T.lossM))} ${au.alt}`]]
+    : cs.aMin == null ? [] : [['Min', nf0.format(alt(cs.aMin))], ['Max', `${nf0.format(alt(cs.aMax))} ${au.alt}`]]);
 }
 window.addEventListener('resize', () => { chartsDirty = true; cache.dialSize = null; });
 
@@ -2440,6 +2492,7 @@ function renderScaleOptions() {
 }
 function syncSettings() {
   $('setUnits').value = S.settings.units;
+  renderSpans();
   $('setAltUnit').value = S.settings.altUnit;
   renderScaleOptions();
   $('setAlert').value = S.settings.alert > 0 ? nf0.format(spd(S.settings.alert)) : '';
@@ -2472,6 +2525,7 @@ $('setUnits').addEventListener('change', (e) => {
 $('setAltUnit').addEventListener('change', (e) => {
   S.settings.altUnit = e.target.value; persist(true); applyUnitLabels(); buildDial(); chartsDirty = true; sendDisplayConfig();
 });
+$('setChartSpan').addEventListener('change', (e) => setChartSpan(e.target.value));
 $('setScale').addEventListener('change', (e) => { S.settings.scales[S.settings.units] = +e.target.value; persist(true); buildDial(); sendDisplayConfig(); });
 $('setAlert').addEventListener('change', (e) => {
   const raw = e.target.value.trim(), v = parseNum(raw);
