@@ -6,6 +6,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
@@ -42,6 +46,34 @@ class MainActivity : ComponentActivity() {
 
     @Volatile
     private var fullscreen = false
+
+    /** Barometer read while Cadran is on screen, at the rate chosen in the settings (0 = as fast as the sensor goes). */
+    @Volatile
+    private var baroHz = 0
+    private var baroListener: SensorEventListener? = null
+
+    private fun startBaro() {
+        stopBaro()
+        val sm = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val sensor = sm.getDefaultSensor(Sensor.TYPE_PRESSURE) ?: return
+        val l = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                val v = event.values[0]
+                if (v < 250f || v > 1100f) return
+                BaroLive.pressure = v
+                BaroLive.count++
+            }
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+        val period = if (baroHz <= 0) SensorManager.SENSOR_DELAY_FASTEST else 1_000_000 / baroHz
+        sm.registerListener(l, sensor, period)
+        baroListener = l
+    }
+
+    private fun stopBaro() {
+        baroListener?.let { (getSystemService(Context.SENSOR_SERVICE) as SensorManager).unregisterListener(it) }
+        baroListener = null
+    }
 
     private val prefs by lazy { getSharedPreferences("cadran", Context.MODE_PRIVATE) }
 
@@ -115,10 +147,12 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         if (hasFine()) startTracking()
+        startBaro()
     }
 
     override fun onStop() {
         super.onStop()
+        stopBaro()
         if (!TripState.tripRunning) stopService(Intent(this, TrackingService::class.java))
     }
 
@@ -221,6 +255,16 @@ class MainActivity : ComponentActivity() {
 
         @JavascriptInterface
         fun diag(): String = GpsInfo.json()
+
+        /** Latest pressure in hPa and a counter of readings, as "p,count"; empty without a barometer. */
+        @JavascriptInterface
+        fun baro(): String = if (BaroLive.count == 0L) "" else "${BaroLive.pressure},${BaroLive.count}"
+
+        @JavascriptInterface
+        fun setBaroRate(hz: Int) {
+            baroHz = hz
+            runOnUiThread { if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) startBaro() }
+        }
 
         @JavascriptInterface
         fun setTripRunning(on: Boolean) {

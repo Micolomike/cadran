@@ -829,12 +829,28 @@ button{cursor:pointer}
 .dial-wrap[data-style="alti"] .alt-val{font-size:10.5cqi;padding:.8cqi 2.2cqi .4cqi;border-radius:1.4cqi;background:var(--face-c);box-shadow:inset 0 0 0 .4cqi var(--bezel);color:var(--dial-ink)}
 .dial-wrap[data-style="alti"] .alt-u{font-size:4cqi}
 .dial-wrap[data-style="alti"] .alt-vs{flex-basis:100%;text-align:center;font-size:3.6cqi}
-.dial-wrap[data-style="alti"] .sats{top:73%}
+.dial-wrap[data-style="alti"] .sats{display:none}
 :root[data-skin="retro"] .dial-wrap[data-style="alti"] .alt-val,:root[data-skin="retro"] .dial-wrap[data-style="alti"] .ro{background:var(--drum-edge);color:var(--drum-ink)}
 :root[data-skin="retro"] .dial-wrap[data-style="alti"] .speed,:root[data-skin="retro"] .dial-wrap[data-style="alti"] .unit{color:var(--drum-ink)}
 .dial-wrap[data-style="alti"] .needle{fill:var(--needle)!important;opacity:1!important}
-.kwin{fill:var(--face-c);stroke:var(--bezel);stroke-width:2}
-.kval{fill:var(--accent);font-family:var(--font-ui);font-weight:700;font-size:15px}
+/* Kollsman window: shows the pressure setting, touch it to set the QNH */
+.kwin{position:absolute;left:59%;top:50%;transform:translateY(-50%);min-width:19cqi;display:grid;justify-items:center;gap:.2cqi;padding:.8cqi 1.6cqi;
+  border-radius:1.2cqi;border:.45cqi solid var(--bezel);background:var(--face-c);color:var(--accent);font-family:var(--font-ui);cursor:pointer}
+.kwin-lbl{font-size:2.6cqi;letter-spacing:.12em;color:var(--dial-ink-dim)}
+.kwin-val{font-size:4.6cqi;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap}
+:root[data-skin="retro"] .kwin{background:var(--drum-edge)}
+/* QNH sheet */
+.qnh-box{display:grid;grid-template-columns:72px minmax(0,1fr) 72px;align-items:center;gap:12px;margin:6px 0 14px}
+.qbtn{height:72px;border-radius:50%;border:1px solid var(--line);background:var(--ground);color:var(--ink);font-size:34px;font-weight:600;line-height:1;touch-action:manipulation}
+.qbtn:active{background:var(--accent);color:var(--btn-ink)}
+.qval{display:grid;justify-items:center;padding:10px 0;border-radius:14px;background:var(--ground);border:2px solid var(--bezel)}
+.qval span{font-family:var(--font-ui);font-weight:700;font-size:40px;line-height:1;color:var(--accent);font-variant-numeric:tabular-nums}
+.qval small{margin-top:4px;color:var(--ink-dim);font-size:13px}
+.qrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.seg{display:inline-flex;padding:3px;gap:3px;border:1px solid var(--line);border-radius:12px;background:var(--ground)}
+.seg button{height:38px;padding-inline:14px;border:0;border-radius:9px;background:transparent;color:var(--ink-dim);font-weight:600}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--btn-ink)}
+.qnote{margin:12px 0 0;font-size:13px;color:var(--ink-dim);max-width:60ch}
 .app.over .speed,.hud.over .hud-speed{color:var(--over)}
 .dial-wrap[data-style="etcs"] .speed{color:var(--ground)!important}
 .app.nosig .speed{color:var(--dial-ink-dim)}
@@ -1073,6 +1089,7 @@ button{cursor:pointer}
           <span class="alt-lbl">ALT</span><span class="alt-val" id="altVal">--</span><span class="alt-u" id="altUnit">m</span><span class="alt-vs" id="altVs"></span>
         </div>
         <div class="sats" id="satText"></div>
+        <button type="button" class="kwin" id="kwin" hidden aria-label="Régler le calage altimétrique (QNH)"><span class="kwin-lbl" id="kwinLbl">AUTO</span><span class="kwin-val" id="kwinVal">----</span></button>
       </div>
     </section>
 
@@ -1139,6 +1156,21 @@ button{cursor:pointer}
     </div>
   </section>
 
+  <section class="sheet" id="sheetQnh" hidden aria-labelledby="qTitle" role="dialog">
+    <div class="sheet-head"><h2 id="qTitle">Calage altimétrique</h2><button class="link-btn" type="button" data-close>OK</button></div>
+    <div class="qnh-box">
+      <button class="qbtn" type="button" id="qMinus" aria-label="Diminuer le QNH">−</button>
+      <div class="qval" aria-live="polite"><span id="qVal">1013</span><small id="qUnit">hPa, QNH</small></div>
+      <button class="qbtn" type="button" id="qPlus" aria-label="Augmenter le QNH">+</button>
+    </div>
+    <div class="qrow">
+      <div class="seg" role="group" aria-label="Unité de pression"><button type="button" data-pu="hpa">hPa</button><button type="button" data-pu="inhg">inHg</button></div>
+      <button class="small-btn" type="button" id="qStd">Standard</button>
+      <button class="small-btn" type="button" id="qAuto">Auto (GPS)</button>
+    </div>
+    <p class="qnote" id="qNote"></p>
+  </section>
+
   <section class="sheet" id="sheetSettings" hidden aria-labelledby="sTitle" role="dialog">
     <div class="sheet-head"><h2 id="sTitle">Réglages</h2><button class="link-btn" type="button" data-close>Fermer</button></div>
     <div class="row">
@@ -1168,9 +1200,18 @@ button{cursor:pointer}
       <label for="setAltUnit">Unité d'altitude</label>
       <select id="setAltUnit"><option value="m">mètres</option><option value="ft">pieds</option></select>
     </div>
+    <div class="row" id="baroRow" hidden>
+      <label for="setBaroHz">Fréquence de l'altimètre</label>
+      <select id="setBaroHz"><option value="0">Maximale</option><option value="10">10 fois par seconde</option><option value="2">2 fois par seconde</option><option value="1">1 fois par seconde (éco)</option></select>
+      <p id="baroHelp">Le baromètre met l'altitude à jour même sans GPS. Plus la fréquence est basse, moins la batterie est sollicitée.</p>
+    </div>
+    <div class="row">
+      <label for="setPUnit">Unité de pression</label>
+      <select id="setPUnit"><option value="hpa">hPa</option><option value="inhg">inHg</option></select>
+    </div>
     <div class="row" id="qnhRow" hidden>
       <label for="setQnh">Calage QNH</label>
-      <div class="inline"><input type="text" class="short" id="setQnh" inputmode="decimal" autocomplete="off"><span>hPa</span></div>
+      <div class="inline"><input type="text" class="short" id="setQnh" inputmode="decimal" autocomplete="off"><span id="qnhUnit">hPa</span></div>
       <p>Pression ramenée au niveau de la mer, donnée par la météo aéronautique (METAR) du terrain le plus proche.</p>
     </div>
     <div class="row">
@@ -1257,7 +1298,7 @@ const $ = (id) => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
 const KEY = 'cadran.v1';
 const fmt = (d) => new Intl.NumberFormat('fr-FR', { minimumFractionDigits: d, maximumFractionDigits: d });
-const nf0 = fmt(0), nf1 = fmt(1);
+const nf0 = fmt(0), nf1 = fmt(1), nf2 = fmt(2);
 const dateFmt = new Intl.DateTimeFormat('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 const inFrame = (() => { try { return window.self !== window.top; } catch (e) { return true; } })();
 const NATIVE = window.CadranNative || null;   // present inside the Android app
@@ -1295,9 +1336,9 @@ function freshTrip() {
 }
 function defaultSettings() {
   return { alert: 0, scales: { kmh: 200, mph: 120, kt: 160 }, wake: true, units: 'kmh', altUnit: 'm', skin: 'nuit', view: 'dial', dialMode: 'speed',
-    altMode: 'auto', qnh: 1013.25, swipeHint: false };
+    altMode: 'auto', qnh: 1013.25, pUnit: 'hpa', baroHz: 0, swipeHint: false };
 }
-function defaults() { return { v: 2, settings: defaultSettings(), totalM: 0, trip: freshTrip(), history: [] }; }
+function defaults() { return { v: 2, settings: defaultSettings(), totalM: 0, trip: freshTrip(), history: [], altCal: null }; }
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
@@ -1311,7 +1352,8 @@ function load() {
     delete st.scale;
     if (!SKINS[st.skin]) st.skin = 'nuit';
     if (!UNITS[st.units]) st.units = 'kmh';
-    return { v: 2, settings: st, totalM: +d.totalM || 0, trip: Object.assign(freshTrip(), d.trip || {}), history: Array.isArray(d.history) ? d.history : [] };
+    return { v: 2, settings: st, totalM: +d.totalM || 0, trip: Object.assign(freshTrip(), d.trip || {}), history: Array.isArray(d.history) ? d.history : [],
+      altCal: d.altCal && isFinite(d.altCal.off) ? d.altCal : null };
   } catch (e) { return defaults(); }
 }
 let S = load();
@@ -1380,42 +1422,29 @@ function hav(a, b) {
 const live = { dispAlt: null, targetKmh: 0, dispKmh: 0, lastFix: null, lastFixAt: -1e9, acc: null, geoOff: false, net: false, diag: null, buf: [] };
 
 /* ---------- Altimeter ----------
-   Barometer (Android app): smooth and reacts within a second, but its zero drifts with the weather.
-   GPS: right on average, but noisy (±5 to 15 m). Auto mode keeps the barometer's shape and slowly
-   pulls its zero onto the GPS altitude. QNH mode uses the pilot's setting instead of the GPS. */
-const ALT = { off: null, n: 0, gpsEma: null, value: null, src: '', hist: [], vs: 0 };
-const P0 = 1013.25;
+   Barometer (Android app): read live, as often as the sensor allows (or slower in eco mode), with or
+   without a GPS signal. Its zero drifts with the weather, so in Auto mode the GPS slowly pulls it onto the
+   true altitude, and that correction is kept for 6 hours so the altimeter stays right indoors.
+   QNH mode uses the pilot's setting instead of the GPS. Without a barometer (web), the GPS alone is used. */
+const ALT = { off: null, n: 0, gpsEma: null, value: null, src: '', hist: [], vs: 0, lastT: 0 };
+const P0 = 1013.25, INHG = 33.8639;
 const baroAlt = (p, ref) => 44330.77 * (1 - Math.pow(p / ref, 0.190263));
-function updateAltitude(f, isNet) {
-  const mode = S.settings.altMode;
-  const p = (f.p != null && f.p > 250 && f.p < 1100) ? +f.p : null;
-  const gpsOk = !isNet && f.alt != null && isFinite(f.alt) && (f.vacc != null ? f.vacc <= 15 : f.acc <= 15);
-  if (gpsOk) ALT.gpsEma = ALT.gpsEma == null ? +f.alt : ALT.gpsEma + 0.25 * (f.alt - ALT.gpsEma);
-  let a = null, src = '';
-  if (p != null && mode !== 'gps') {
-    if (mode === 'qnh') { a = baroAlt(p, +S.settings.qnh || P0); src = 'qnh'; }
-    else {
-      const b = baroAlt(p, P0);
-      if (gpsOk && f.altMsl !== false) {
-        // Average the first readings, then follow slowly: a single noisy GPS altitude must not shift the scale.
-        const target = f.alt - b, k = Math.max(0.03, 1 / (++ALT.n));
-        ALT.off = ALT.off == null ? target : ALT.off + k * (target - ALT.off);
-      }
-      a = b + (ALT.off == null ? 0 : ALT.off);
-      src = ALT.off == null ? 'baro' : 'auto';
-    }
-  } else if (ALT.gpsEma != null) { a = ALT.gpsEma; src = 'gps'; }
-  if (a == null) return;
+const qnhFor = (p, a) => p / Math.pow(1 - a / 44330.77, 1 / 0.190263);     // pressure setting that makes p read altitude a
+const BARO = { p: null, at: -1e9, last: -1, lastPoll: 0, rate: 0, rN: 0, rT: 0 };
+const baroLive = () => BARO.p != null && performance.now() - BARO.at < 1500;
+function freshCal() { const c = S.altCal; return c && Date.now() - c.t < 6 * 3600 * 1000 ? c : null; }
+
+function setAltitude(a, src, t) {
   ALT.value = a; ALT.src = src;
-  const t = f.t;
+  const dtS = ALT.lastT ? Math.max(0, (t - ALT.lastT) / 1000) : 0; ALT.lastT = t;
   ALT.hist.push({ t, a });
-  while (ALT.hist.length && t - ALT.hist[0].t > 12000) ALT.hist.shift();
+  while (ALT.hist.length && t - ALT.hist[0].t > 6000) ALT.hist.shift();
   if (ALT.hist.length > 2) {
     const h0 = ALT.hist[0], span = (t - h0.t) / 1000;
-    if (span >= 4) { const slope = (a - h0.a) / span; ALT.vs = ALT.vs + 0.4 * (slope - ALT.vs); }
+    if (span >= 3 && dtS > 0) { const slope = (a - h0.a) / span; ALT.vs += (1 - Math.exp(-dtS / 1.2)) * (slope - ALT.vs); }
   }
   const T = S.trip;
-  if (T.state === 'running' && !isNet) {
+  if (T.state === 'running') {
     T.altMin = T.altMin == null ? a : Math.min(T.altMin, a);
     T.altMax = T.altMax == null ? a : Math.max(T.altMax, a);
     const th = src === 'gps' ? 8 : 2;          // ignore noise smaller than this
@@ -1423,6 +1452,55 @@ function updateAltitude(f, isNet) {
     else if (a - T.altRef >= th) { T.gainM += a - T.altRef; T.altRef = a; }
     else if (T.altRef - a >= th) { T.lossM += T.altRef - a; T.altRef = a; }
   }
+}
+function altFromPressure(p) {
+  if (S.settings.altMode === 'qnh') return [baroAlt(p, +S.settings.qnh || P0), 'qnh'];
+  if (ALT.off == null) { const c = freshCal(); if (c) { ALT.off = c.off; ALT.n = 30; } }
+  return [baroAlt(p, P0) + (ALT.off == null ? 0 : ALT.off), ALT.off == null ? 'baro' : 'auto'];
+}
+/* Live pressure from the Android sensor: drives the altimeter whenever it is available. */
+function onPressure(p, t) {
+  BARO.p = p; BARO.at = performance.now();
+  if (S.settings.altMode === 'gps') return;
+  const [a, src] = altFromPressure(p);
+  setAltitude(a, src, t);
+  pushLive(t);
+}
+/* Positions: calibrate the barometer on the GPS, and give the altitude when there is no live pressure
+   (web version, or positions replayed after the screen was off). */
+function updateAltitude(f, isNet) {
+  const mode = S.settings.altMode;
+  const p = (f.p != null && f.p > 250 && f.p < 1100) ? +f.p : null;
+  const gpsOk = !isNet && f.alt != null && isFinite(f.alt) && (f.vacc != null ? f.vacc <= 15 : f.acc <= 15);
+  if (gpsOk) ALT.gpsEma = ALT.gpsEma == null ? +f.alt : ALT.gpsEma + 0.25 * (f.alt - ALT.gpsEma);
+  if (p != null && gpsOk && f.altMsl !== false && mode === 'auto') {
+    // Average the first readings, then follow slowly: a single noisy GPS altitude must not shift the scale.
+    if (ALT.off == null) { const c = freshCal(); if (c) { ALT.off = c.off; ALT.n = 30; } }
+    const target = f.alt - baroAlt(p, P0), k = Math.max(0.03, 1 / (++ALT.n));
+    ALT.off = ALT.off == null ? target : ALT.off + k * (target - ALT.off);
+    if (!demo) S.altCal = { off: ALT.off, t: Date.now() };
+  }
+  if (mode !== 'gps' && baroLive()) return;          // the live barometer already drives the display
+  let a = null, src = '';
+  if (p != null && mode !== 'gps') [a, src] = altFromPressure(p);
+  else if (ALT.gpsEma != null && (gpsOk || mode === 'gps')) { a = ALT.gpsEma; src = 'gps'; }
+  if (a == null || isNet && src === 'gps') return;
+  setAltitude(a, src, f.t);
+}
+function pollBaro(now) {
+  if (!NATIVE || demo) return;
+  const hz = +S.settings.baroHz || 0;
+  if (hz > 0 && now - BARO.lastPoll < 1000 / hz - 4) return;
+  BARO.lastPoll = now;
+  const r = nativeCall('baro');
+  if (!r) return;
+  const [ps, ns] = r.split(','), n = +ns;
+  if (n === BARO.last) return;
+  // measured sensor rate, for the settings screen
+  if (BARO.rT === 0) { BARO.rT = now; BARO.rN = n; }
+  else if (now - BARO.rT > 2000) { BARO.rate = (n - BARO.rN) / ((now - BARO.rT) / 1000); BARO.rT = now; BARO.rN = n; }
+  BARO.last = n;
+  onPressure(+ps, Date.now());
 }
 
 /* One position fix: { lat, lon, acc (m), speed (m/s|null), t (ms), alt?, altMsl?, vacc?, p? (hPa), net? } */
@@ -1570,7 +1648,7 @@ function renderDiag() {
   const d = live.diag;
   if (!d) { $('diagText').textContent = ''; return; }
   const age = (s) => s < 0 ? 'jamais' : s < 60 ? `il y a ${s} s` : `il y a ${Math.round(s / 60)} min`;
-  const baro = d.baro ? `baromètre ${d.p ? nf1.format(d.p) + ' hPa' : 'présent'}` : 'pas de baromètre';
+  const baro = d.baro ? `baromètre ${BARO.p != null ? nf1.format(BARO.p) + ' hPa' : 'présent'}${BARO.rate > 0 ? `, ${nf0.format(BARO.rate)} mesures par seconde` : ''}` : 'pas de baromètre';
   $('diagText').textContent = `Diagnostic : service ${d.service ? 'actif' : 'arrêté'}, GPS ${d.gps ? 'à l\'écoute' : 'inactif'}, `
     + `secours ${d.fallback || 'aucun'}, satellites ${d.used} sur ${d.visible}, ${baro}, dernier point GPS ${age(d.gpsAge)}, `
     + `dernier point réseau ${age(d.fallbackAge)}, altitude ${ALT.src || 'aucune'}.`;
@@ -1701,6 +1779,7 @@ function buildDial() {
   const alertD = spd(+S.settings.alert || 0);
   const step = tickStep(scale), minor = step / 2;
   $('dialWrap').dataset.style = style;
+  $('kwin').hidden = style !== 'alti';
   svg.textContent = '';
   dial.labels = []; dial.segs = []; dial.progress = null;
   const defs = el('defs', {}, svg);
@@ -1809,12 +1888,6 @@ function buildAltimeter(skin) {
     t.textContent = n;
   }
   const lg = el('text', { x: C, y: 168, 'text-anchor': 'middle', class: 'brand' }, svg); lg.textContent = au.legend;
-  if (skin.style === 'asi') {
-    // Kollsman window: the altimeter setting in use.
-    el('rect', { x: 270, y: 186, width: 64, height: 28, rx: 4, class: 'kwin' }, svg);
-    const k = el('text', { x: 302, y: 201, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'kval' }, svg);
-    k.textContent = S.settings.altMode === 'qnh' ? nf0.format(+S.settings.qnh || P0).replace(/\s/g, '') : S.settings.altMode === 'gps' ? 'GPS' : 'AUTO';
-  }
   dial.needleShort = el('g', {}, svg);
   el('polygon', { points: `${C - 16},${C - 7} ${C + 88},${C - 6} ${C + 102},${C} ${C + 88},${C + 6} ${C - 16},${C + 7}`, class: 'needle' }, dial.needleShort);
   dial.needle = el('g', {}, svg);
@@ -1948,8 +2021,14 @@ function frame(now) {
     ? (d.visible > 0 ? `Satellites captés : ${d.used} sur ${d.visible}` : 'Aucun satellite capté') : '');
 
   // Altimeter
+  pollBaro(now);
   if (ALT.value == null) live.dispAlt = null;
-  else live.dispAlt = live.dispAlt == null || reduceMotion ? ALT.value : live.dispAlt + (ALT.value - live.dispAlt) * Math.min(1, dt * 4);
+  else live.dispAlt = live.dispAlt == null || reduceMotion ? ALT.value : live.dispAlt + (ALT.value - live.dispAlt) * Math.min(1, dt * 14);
+  if (dial.style === 'alti') {
+    const q = currentQnh();
+    setText('kwinLbl', S.settings.altMode === 'qnh' ? 'QNH' : S.settings.altMode === 'gps' ? 'GPS' : 'AUTO');
+    setText('kwinVal', q == null ? '----' : fmtP(q));
+  }
   if (ALT.value != null) {
     setText('altVal', nf0.format(alt(ALT.value)));
     const au = AU(), vsU = ALT.vs * au.vk, still = Math.abs(vsU) < au.still;
@@ -2034,6 +2113,14 @@ function drawChart(cv, pts, o) {
   const last = ys[ys.length - 1];
   ctx.fillStyle = acc; ctx.beginPath(); ctx.arc(X(last.x), Y(last.y), 3.5, 0, Math.PI * 2); ctx.fill();
 }
+/* Pressure setting shown in the window: the pilot's QNH, or the one equivalent to the automatic altitude. */
+function currentQnh() {
+  if (S.settings.altMode === 'qnh') return +S.settings.qnh || P0;
+  if (BARO.p == null || ALT.value == null) return null;
+  return qnhFor(BARO.p, ALT.value);
+}
+const fmtP = (hpa) => S.settings.pUnit === 'inhg' ? nf2.format(hpa / INHG) : nf0.format(Math.round(hpa)).replace(/\s/g, '');
+const pUnitLabel = () => S.settings.pUnit === 'inhg' ? 'inHg' : 'hPa';
 const minFmt = (x) => x < 1 ? `${nf0.format(x * 60)} s` : x < 60 ? `${nf0.format(x)} min` : `${Math.floor(x / 60)} h ${String(Math.round(x % 60)).padStart(2, '0')}`;
 function seriesFor(points, live5) {
   const u = U(), t0 = points.length ? points[0].t : 0;
@@ -2146,7 +2233,7 @@ function startDemo(mode) {
   if (demo) return;
   closeSheets(); hidePerm();
   demo = { real: S, realTrack: track, t: 0, lat: 48.80, lon: 2.40, hdg: 60, mode };
-  S = { v: 2, settings: demo.real.settings, totalM: demo.real.totalM || 48213400, trip: freshTrip(), history: demo.real.history };
+  S = { v: 2, settings: demo.real.settings, totalM: demo.real.totalM || 48213400, trip: freshTrip(), history: demo.real.history, altCal: null };
   S.trip.state = 'running'; S.trip.startedAt = Date.now(); S.trip.runningSince = Date.now();
   track = []; mapResetTrack();
   live.lastFix = null; live.targetKmh = 0; live.net = false; live.buf = [];
@@ -2188,7 +2275,7 @@ function stopDemo() {
 function openSheet(id) { closeSheets(); $('scrim').hidden = false; $(id).hidden = false; const b = $(id).querySelector('[data-close],[data-back]'); if (b) b.focus(); }
 function closeSheets() {
   $('scrim').hidden = true;
-  for (const id of ['sheetHistory', 'sheetSettings', 'sheetDetail']) $(id).hidden = true;
+  for (const id of ['sheetHistory', 'sheetSettings', 'sheetDetail', 'sheetQnh']) $(id).hidden = true;
   closeDetailMap();
 }
 $('scrim').addEventListener('click', closeSheets);
@@ -2325,7 +2412,13 @@ function syncSettings() {
   $('setWake').checked = !!S.settings.wake;
   $('setTotal').value = nf1.format(Math.floor(dst(S.totalM) * 10) / 10);
   $('setAltMode').value = S.settings.altMode;
-  $('setQnh').value = nf1.format(+S.settings.qnh || P0).replace(/\s/g, '');
+  $('setQnh').value = S.settings.pUnit === 'inhg' ? nf2.format((+S.settings.qnh || P0) / INHG) : nf1.format(+S.settings.qnh || P0).replace(/\s/g, '');
+  $('qnhUnit').textContent = pUnitLabel();
+  $('setPUnit').value = S.settings.pUnit;
+  $('setBaroHz').value = String(S.settings.baroHz || 0);
+  $('baroRow').hidden = !NATIVE;
+  $('baroHelp').textContent = 'Le baromètre met l\'altitude à jour même sans GPS. Plus la fréquence est basse, moins la batterie est sollicitée.'
+    + (BARO.rate > 0 ? ` Mesuré en ce moment : ${nf0.format(BARO.rate)} fois par seconde.` : '');
   $('qnhRow').hidden = S.settings.altMode !== 'qnh';
   $('altHelp').textContent = {
     auto: 'Auto : le baromètre donne les variations fines, le GPS recale l\'altitude réelle. Sans baromètre, GPS seul.',
@@ -2350,13 +2443,16 @@ $('setAlert').addEventListener('change', (e) => {
   else { toast('Entre une vitesse, par exemple 90'); syncSettings(); return; }
   persist(true); buildDial(); syncSettings(); chartsDirty = true;
 });
-function resetAltimeter() { Object.assign(ALT, { off: null, n: 0, gpsEma: null, value: null, src: '', hist: [], vs: 0 }); live.dispAlt = null; S.trip.altRef = null; }
+function resetAltimeter() { Object.assign(ALT, { off: null, n: 0, gpsEma: null, value: null, src: '', hist: [], vs: 0, lastT: 0 }); live.dispAlt = null; S.trip.altRef = null; }
 // Changing the altitude source makes the reading jump: start the climb/descent count again from the new value.
 $('setAltMode').addEventListener('change', (e) => { S.settings.altMode = e.target.value; resetAltimeter(); persist(true); syncSettings(); buildDial(); });
+$('setPUnit').addEventListener('change', (e) => { S.settings.pUnit = e.target.value; persist(true); syncSettings(); });
+$('setBaroHz').addEventListener('change', (e) => { S.settings.baroHz = +e.target.value; persist(true); nativeCall('setBaroRate', S.settings.baroHz); syncSettings(); });
 $('setQnh').addEventListener('change', (e) => {
-  const v = parseNum(e.target.value);
-  if (isFinite(v) && v >= 900 && v <= 1080) { S.settings.qnh = v; S.trip.altRef = null; ALT.hist = []; persist(true); buildDial(); toast('QNH ' + nf1.format(v) + ' hPa'); }
-  else toast('Entre un QNH entre 900 et 1080 hPa, par exemple 1013,2');
+  let v = parseNum(e.target.value);
+  if (S.settings.pUnit === 'inhg' && isFinite(v)) v = v * INHG;
+  if (isFinite(v) && v >= 900 && v <= 1080) { S.settings.qnh = v; S.trip.altRef = null; ALT.hist = []; persist(true); buildDial(); toast('QNH ' + fmtP(v) + ' ' + pUnitLabel()); }
+  else toast(S.settings.pUnit === 'inhg' ? 'Entre un QNH entre 26,58 et 31,89 inHg, par exemple 29,92' : 'Entre un QNH entre 900 et 1080 hPa, par exemple 1013');
   syncSettings();
 });
 $('setWake').addEventListener('change', (e) => { S.settings.wake = e.target.checked; persist(true); e.target.checked ? keepAwake() : releaseWake(); });
@@ -2375,6 +2471,47 @@ $('btnWipe').addEventListener('click', (e) => armConfirm(e.currentTarget, 'Confi
 }));
 $('btnPermGo').addEventListener('click', () => { const P = PERM[permKind]; if (P && P.act) P.act(); });
 $('btnPermDemo').addEventListener('click', () => startDemo('demo'));
+
+/* ---------- QNH sheet: the altimeter's setting knob ---------- */
+function renderQnh() {
+  const auto = S.settings.altMode !== 'qnh', q = auto ? currentQnh() : +S.settings.qnh || P0;
+  $('qVal').textContent = q == null ? '----' : fmtP(q);
+  $('qUnit').textContent = pUnitLabel() + (auto ? (S.settings.altMode === 'gps' ? ', GPS' : ', automatique') : ', QNH');
+  for (const b of document.querySelectorAll('[data-pu]')) b.setAttribute('aria-pressed', String(b.dataset.pu === S.settings.pUnit));
+  $('qStd').textContent = 'Standard ' + fmtP(P0);
+  $('qAuto').hidden = S.settings.altMode === 'auto';
+  $('qNote').textContent = auto
+    ? (BARO.p == null ? 'Pas de mesure du baromètre : le calage n\'agit pas, l\'altitude vient du GPS.'
+      : S.settings.altMode === 'gps' ? 'Altitude GPS. Touche + ou − pour passer en calage manuel sur le baromètre.'
+      : 'Valeur calculée : le GPS recale l\'altimètre en continu. Touche + ou − pour caler toi-même le QNH.')
+    : 'Calage manuel. Le QNH du terrain le plus proche est donné par son METAR ou par le contrôle aérien.';
+}
+function nudgeQnh(dir) {
+  const inhg = S.settings.pUnit === 'inhg';
+  let q = S.settings.altMode === 'qnh' ? +S.settings.qnh || P0 : (currentQnh() || +S.settings.qnh || P0);
+  if (inhg) q = (Math.round(q / INHG * 100) + dir) / 100 * INHG;           // steps of 0,01 inHg
+  else q = Math.round(q) + dir;                                           // steps of 1 hPa
+  setQnh(Math.min(1080, Math.max(900, q)));
+}
+function setQnh(hpa) {
+  S.settings.qnh = hpa;
+  if (S.settings.altMode !== 'qnh') { S.settings.altMode = 'qnh'; buildDial(); }
+  S.trip.altRef = null; ALT.hist = []; ALT.lastT = 0;
+  if (BARO.p != null) onPressure(BARO.p, Date.now());
+  persist(true); renderQnh();
+}
+// Hold + or − to turn the knob continuously.
+for (const [id, dir] of [['qMinus', -1], ['qPlus', 1]]) {
+  let hold = null, rpt = null;
+  const stop = () => { clearTimeout(hold); clearInterval(rpt); hold = rpt = null; };
+  $(id).addEventListener('pointerdown', (e) => { e.preventDefault(); nudgeQnh(dir); hold = setTimeout(() => { rpt = setInterval(() => nudgeQnh(dir), 90); }, 450); });
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) $(id).addEventListener(ev, stop);
+  $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); nudgeQnh(dir); } });
+}
+$('qStd').addEventListener('click', () => setQnh(P0));
+$('qAuto').addEventListener('click', () => { S.settings.altMode = 'auto'; resetAltimeter(); persist(true); buildDial(); renderQnh(); });
+for (const b of document.querySelectorAll('[data-pu]')) b.addEventListener('click', () => { S.settings.pUnit = b.dataset.pu; persist(true); renderQnh(); syncSettings(); });
+$('kwin').addEventListener('click', () => { renderQnh(); openSheet('sheetQnh'); });
 
 /* ---------- Full screen and HUD ---------- */
 const canFull = !!NATIVE || !!(document.fullscreenEnabled && document.documentElement.requestFullscreen);
@@ -2396,7 +2533,7 @@ $('hud').addEventListener('click', exitHud);
 window.__cadranBack = () => {
   if (!$('hud').hidden) { exitHud(); return true; }
   if (!$('sheetDetail').hidden) { closeDetailMap(); openHistory(); return true; }
-  if (!$('sheetHistory').hidden || !$('sheetSettings').hidden) { closeSheets(); return true; }
+  if (!$('sheetHistory').hidden || !$('sheetSettings').hidden || !$('sheetQnh').hidden) { closeSheets(); return true; }
   if (S.settings.view !== 'dial') { setView('dial'); return true; }
   return false;
 };
@@ -2423,6 +2560,7 @@ if (NATIVE) {
 window.__cadran = { onFix, getState: () => S, getTrack: () => track, getAlt: () => ALT, startDemo, stopDemo, setView };
 document.documentElement.dataset.skin = S.settings.skin;
 nativeCall('setBarColor', tok('--ground'));
+nativeCall('setBaroRate', +S.settings.baroHz || 0);
 applyUnitLabels();
 buildDial();
 renderControls();

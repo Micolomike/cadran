@@ -36,6 +36,12 @@ object TripState {
     var tripRunning: Boolean = false
 }
 
+/** Live barometer readings while the app is on screen. */
+object BaroLive {
+    @Volatile var pressure = 0f
+    @Volatile var count = 0L
+}
+
 /** What the GPS service is doing, for the status line and the diagnostic. */
 object GpsInfo {
     @Volatile var serviceRunning = false
