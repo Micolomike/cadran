@@ -1,0 +1,32 @@
+{
+  "name": "Cadran GPS",
+  "short_name": "Cadran",
+  "lang": "fr",
+  "description": "Compteur de vitesse GPS et compteur kilométrique, sans publicité.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#071A1F",
+  "theme_color": "#071A1F",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
