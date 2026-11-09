@@ -170,11 +170,15 @@ class TrackingService : Service() {
         override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
     }
 
+    private val NET_MAX_ACC = 100f
+
     private val fallbackListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
             val now = SystemClock.elapsedRealtime()
             GpsInfo.lastFallbackAt = now
-            if (now - GpsInfo.lastGpsAt > 3000) FixBuffer.add(location, fromNetwork = true, mslAltitude = null)
+            // Network positions are only kept when within ±100 m.
+            val precise = location.hasAccuracy() && location.accuracy <= NET_MAX_ACC
+            if (precise && now - GpsInfo.lastGpsAt > 3000) FixBuffer.add(location, fromNetwork = true, mslAltitude = null)
         }
         override fun onProviderEnabled(provider: String) {}
         override fun onProviderDisabled(provider: String) {}

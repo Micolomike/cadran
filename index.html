@@ -1544,8 +1544,11 @@ function pollBaro(now) {
   onPressure(+ps, Date.now());
 }
 
+/* Network positions less precise than this are ignored altogether (display, map, track). */
+const NET_MAX_ACC = 100;
 /* One position fix: { lat, lon, acc (m), speed (m/s|null), t (ms), alt?, altMsl?, vacc?, p? (hPa), net? } */
 function onFix(f) {
+  if (f.net && !(f.acc > 0 && f.acc <= NET_MAX_ACC)) return;
   live.lastFixAt = performance.now();
   live.acc = f.acc;
   if (f.net) {
@@ -1606,7 +1609,7 @@ function onFix(f) {
 
 /* Network fix in the track: only once it has clearly moved beyond its own accuracy, so the line doesn't zigzag while parked. */
 function recordNetPoint(f) {
-  if (!(f.acc > 0) || f.acc > 2000) return;
+  if (!(f.acc > 0) || f.acc > NET_MAX_ACC) return;
   const last = track[track.length - 1];
   if (last) {
     if (f.t - last.t < 5000) return;
