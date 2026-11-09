@@ -113,7 +113,8 @@ object FixBuffer {
  *
  * The GPS chip gives the precise positions and speeds used for measuring.
  * A second, network-assisted source (Wi-Fi, cell towers) is only passed on when the GPS
- * has said nothing for 3 seconds, so the app still knows roughly where it is indoors.
+ * has said nothing for 3 seconds, so the app still knows roughly where it is indoors,
+ * or when the GPS is switched off in the phone settings.
  * The page never measures distance from those network positions.
  */
 class TrackingService : Service() {
@@ -280,7 +281,7 @@ class TrackingService : Service() {
         }
         if (fallback != null) {
             try {
-                lm.requestLocationUpdates(fallback, 2000L, 0f, fallbackListener, looper)
+                lm.requestLocationUpdates(fallback, 1000L, 0f, fallbackListener, looper)
                 GpsInfo.fallbackProvider = fallback
             } catch (e: Exception) {
                 GpsInfo.fallbackProvider = null

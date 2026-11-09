@@ -919,7 +919,10 @@ button{cursor:pointer}
 .chart-title{font-weight:600;font-size:14px}
 .chart-stats{display:flex;gap:12px;font-size:12.5px;color:var(--ink-dim);font-variant-numeric:tabular-nums;flex-wrap:wrap}
 .chart-stats b{color:var(--ink);font-weight:600}
-.chart canvas{display:block;width:100%;height:100%;min-height:0}
+.chart canvas{display:block;width:100%;height:100%;min-height:0;touch-action:pan-y}
+.chart-tools{display:grid;gap:6px;min-width:0}
+.spans[hidden]{display:none}
+.d-zooms{margin-bottom:10px}
 .chart-note{font-size:12px;color:var(--ink-dim)}
 
 /* Map view */
@@ -1105,7 +1108,10 @@ button{cursor:pointer}
     </section>
 
     <section class="view view-charts" id="viewCharts" role="tabpanel" aria-labelledby="tabCharts" hidden>
-      <div class="spans" id="spans" role="group" aria-label="Durée affichée"></div>
+      <div class="chart-tools">
+        <div class="spans" id="spans" role="group" aria-label="Durée affichée"></div>
+        <div class="spans" id="zooms" role="group" aria-label="Portion du trajet affichée" hidden></div>
+      </div>
       <div class="chart">
         <div class="chart-head"><span class="chart-title" id="chSpeedTitle">Vitesse</span><span class="chart-stats" id="chSpeedStats"></span></div>
         <canvas id="chSpeed" aria-label="Courbe de vitesse"></canvas>
@@ -1159,6 +1165,7 @@ button{cursor:pointer}
   <section class="sheet" id="sheetDetail" hidden aria-labelledby="dTitle" role="dialog">
     <div class="sheet-head"><h2 id="dTitle">Trajet</h2><button class="link-btn" type="button" data-back>Retour</button></div>
     <dl class="d-grid" id="dGrid"></dl>
+    <div class="spans d-zooms" id="dZooms" role="group" aria-label="Portion du trajet affichée" hidden></div>
     <div class="chart d-chart"><div class="chart-head"><span class="chart-title">Vitesse</span><span class="chart-stats" id="dSpeedStats"></span></div><canvas id="dSpeed"></canvas></div>
     <div class="chart d-chart"><div class="chart-head"><span class="chart-title">Altitude</span><span class="chart-stats" id="dAltStats"></span></div><canvas id="dAlt"></canvas></div>
     <div class="d-map"><div class="map" id="dMap"></div><div class="map-note" id="dMapNote" hidden></div></div>
@@ -1367,7 +1374,7 @@ function freshTrip() {
 }
 function defaultSettings() {
   return { alert: 0, scales: { kmh: 200, mph: 120, kt: 160 }, wake: true, units: 'kmh', altUnit: 'm', skin: 'nuit', view: 'dial', dialMode: 'speed',
-    altMode: 'auto', qnh: 1013.25, pUnit: 'hpa', baroHz: 0, background: 'trip', chartSpan: 'auto', swipeHint: false };
+    altMode: 'auto', qnh: 1013.25, pUnit: 'hpa', baroHz: 0, background: 'trip', chartSpan: 'auto', chartZoom: 0, zoomHint: false, swipeHint: false };
 }
 function defaults() { return { v: 2, settings: defaultSettings(), totalM: 0, trip: freshTrip(), history: [], altCal: null }; }
 function load() {
@@ -1544,7 +1551,9 @@ function onFix(f) {
   if (f.net) {
     // Wi-Fi / cell-tower position from the Android app, sent only while the GPS is silent.
     live.net = true;
-    if (f.speed != null && isFinite(f.speed) && f.speed >= 0 && f.acc <= 50) live.targetKmh = f.speed * 3.6 < 2 ? 0 : f.speed * 3.6;
+    // A network position rarely carries a speed: without one the dial shows "--" rather than a stale value.
+    live.netSpeed = f.speed != null && isFinite(f.speed) && f.speed >= 0 && f.acc <= 50;
+    if (live.netSpeed) live.targetKmh = f.speed * 3.6 < 2 ? 0 : f.speed * 3.6;
     updateAltitude(f, true);
     pushLive(f.t);
     // Move the map cursor too (shown hollow with its accuracy circle).
@@ -1684,15 +1693,19 @@ function initNative() {
     try { st = NATIVE.permission(); } catch (e) {}
     try { live.diag = JSON.parse(NATIVE.diag()); } catch (e) { live.diag = null; }
     if (!$('sheetSettings').hidden) renderDiag();
-    if (st === 'granted') {
+    // "netonly": the GPS is switched off but Wi-Fi / cell-tower positioning still works, so carry on with it.
+    if (st === 'granted' || st === 'netonly') {
       if (!nativeStarted) { nativeStarted = true; try { NATIVE.start(); } catch (e) {} }
+      const netOnly = st === 'netonly';
+      if (netOnly && !live.netOnly && !demo) toast('GPS coupé : position par le réseau, sans vitesse ni distance');
+      live.netOnly = netOnly;
       live.geoOff = false;
       if (permKind) hidePerm();
       let fixes = [];
       try { fixes = JSON.parse(NATIVE.drain()); } catch (e) {}
       if (!demo) for (const f of fixes) onFix(f);
     } else {
-      nativeStarted = false;
+      nativeStarted = false; live.netOnly = false;
       live.geoOff = st !== 'prompt';
       live.offLabel = st === 'gpsoff' ? 'Localisation désactivée' : null;
       if (!demo) showPerm(st === 'gpsoff' ? 'gpsoff' : st === 'coarse' ? 'coarse' : st === 'denied' ? 'nativeDenied' : 'prompt');
@@ -2082,10 +2095,10 @@ function frame(now) {
   if (demo) st = 'demo';
   else if (live.geoOff) st = 'off';
   else if (live.lastFixAt < 0) st = 'wait';
-  else if (age > 5) st = 'lost';
+  else if (age > (live.net ? 30 : 5)) st = 'lost';
   else if (live.acc > 20) st = 'weak';
   else st = 'ok';
-  const hasSpeed = st === 'ok' || st === 'weak' || st === 'demo';
+  const hasSpeed = (st === 'ok' || st === 'weak' || st === 'demo') && !(live.net && !live.netSpeed && st !== 'demo');
   const target = hasSpeed ? live.targetKmh : 0;
   live.dispKmh = reduceMotion ? target : live.dispKmh + (target - live.dispKmh) * Math.min(1, dt * 6);
   if (Math.abs(target - live.dispKmh) < 0.05) live.dispKmh = target;
@@ -2105,11 +2118,12 @@ function frame(now) {
 
   const g = $('gps');
   if (g.dataset.st !== st) g.dataset.st = st;
-  const gpsLabel = { demo: 'Démo', off: live.offLabel || 'Position bloquée', wait: 'Recherche GPS', lost: 'Signal perdu' }[st]
+  const gpsLabel = { demo: 'Démo', off: live.offLabel || 'Position bloquée', wait: live.netOnly ? 'Recherche réseau' : 'Recherche GPS', lost: 'Signal perdu' }[st]
     || `${live.net ? 'Position réseau' : 'GPS'} ±${Math.max(1, Math.round(live.acc))} m`;
   setText('gpsText', gpsLabel);
   const d = live.diag;
-  setText('satText', d && (st !== 'ok' || live.net) && st !== 'demo' && st !== 'off'
+  setText('satText', live.netOnly && st !== 'demo' && st !== 'off' ? 'GPS coupé : ni vitesse ni distance'
+    : d && (st !== 'ok' || live.net) && st !== 'demo' && st !== 'off'
     ? (d.visible > 0 ? `Satellites captés : ${d.used} sur ${d.visible}` : 'Aucun satellite capté') : '');
 
   // Altimeter
@@ -2142,9 +2156,11 @@ function frame(now) {
 let chartsDirty = true, lastChartDraw = 0;
 function tok(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888'; }
 function niceCeil(v, step) { return Math.max(step, Math.ceil(v / step) * step); }
-/* One line chart on a canvas: pts [{x, y}], y may be null (gap). */
+/* One line chart on a canvas: pts [{x, y}], y may be null (gap).
+   o.cursor {x, y}: reading line drawn at that point. The scale is kept on the canvas (cv._m) for touch. */
 function drawChart(cv, pts, o) {
   const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  cv._m = null;
   if (!w || !h) return;
   if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
   const ctx = cv.getContext('2d');
@@ -2169,6 +2185,7 @@ function drawChart(cv, pts, o) {
   const x0 = o.xMin != null ? o.xMin : pts[0].x, x1 = Math.max(o.xMax != null ? o.xMax : pts[pts.length - 1].x, x0 + 1e-6);
   const L = 34, Rr = 6, Tt = 6, B = 16, W = w - L - Rr, H = h - Tt - B;
   const X = (x) => L + (x - x0) / (x1 - x0) * W, Y = (y) => Tt + (1 - (y - y0) / (y1 - y0)) * H;
+  cv._m = { L, W, x0, x1 };
   // grid + y labels
   ctx.strokeStyle = lineC; ctx.lineWidth = 1; ctx.fillStyle = ink; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   for (let v = y0; v <= y1 + 1e-9; v += stepY) {
@@ -2188,7 +2205,8 @@ function drawChart(cv, pts, o) {
     ctx.save(); ctx.strokeStyle = tok('--over'); ctx.setLineDash([4, 4]); ctx.globalAlpha = .8;
     ctx.beginPath(); ctx.moveTo(L, Y(o.ref)); ctx.lineTo(w - Rr, Y(o.ref)); ctx.stroke(); ctx.restore();
   }
-  // area + line, broken where y is null
+  // area + line, broken where y is null; kept inside the plot when only a stretch of the trip is shown
+  ctx.save(); ctx.beginPath(); ctx.rect(L, 0, W + 4, h); ctx.clip();
   const segs = []; let cur = [];
   for (const p of pts) { if (p.y == null) { if (cur.length) segs.push(cur); cur = []; } else cur.push(p); }
   if (cur.length) segs.push(cur);
@@ -2203,7 +2221,17 @@ function drawChart(cv, pts, o) {
     ctx.strokeStyle = acc; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
   }
   const last = ys[ys.length - 1];
-  ctx.fillStyle = acc; ctx.beginPath(); ctx.arc(X(last.x), Y(last.y), 3.5, 0, Math.PI * 2); ctx.fill();
+  if (!o.cursor) { ctx.fillStyle = acc; ctx.beginPath(); ctx.arc(X(last.x), Y(last.y), 3.5, 0, Math.PI * 2); ctx.fill(); }
+  ctx.restore();
+  if (o.cursor && o.cursor.x >= x0 && o.cursor.x <= x1) {
+    const cx = Math.round(X(o.cursor.x)) + 0.5;
+    ctx.save(); ctx.strokeStyle = tok('--ink'); ctx.lineWidth = 1; ctx.globalAlpha = .75;
+    ctx.beginPath(); ctx.moveTo(cx, Tt); ctx.lineTo(cx, Tt + H); ctx.stroke(); ctx.restore();
+    if (o.cursor.y != null) {
+      ctx.beginPath(); ctx.arc(cx, Y(o.cursor.y), 5, 0, Math.PI * 2);
+      ctx.fillStyle = acc; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = tok('--dial'); ctx.stroke();
+    }
+  }
 }
 /* Pressure setting shown in the window: the pilot's QNH, or the one equivalent to the automatic altitude. */
 function currentQnh() {
@@ -2214,14 +2242,6 @@ function currentQnh() {
 const fmtP = (hpa) => S.settings.pUnit === 'inhg' ? nf2.format(hpa / INHG) : nf0.format(Math.round(hpa)).replace(/\s/g, '');
 const pUnitLabel = () => S.settings.pUnit === 'inhg' ? 'inHg' : 'hPa';
 const minFmt = (x) => x < 1 ? `${nf0.format(x * 60)} s` : x < 60 ? `${nf0.format(x)} min` : `${Math.floor(x / 60)} h ${String(Math.round(x % 60)).padStart(2, '0')}`;
-function seriesFor(points, live5) {
-  const u = U(), t0 = points.length ? points[0].t : 0;
-  const speed = points.map((p) => ({ x: live5 ? (p.t - points[points.length - 1].t) / 60000 : (p.t - t0) / 60000, y: p.v == null ? null : spd(p.v) }));
-  const altS = live5
-    ? points.map((p) => ({ x: (p.t - points[points.length - 1].t) / 60000, y: p.a == null ? null : alt(p.a) }))
-    : points.map((p) => ({ x: dst(p.d || 0), y: p.a == null ? null : alt(p.a) }));
-  return { speed, altS, u };
-}
 function chartStats(points) {
   let vMax = 0, aMin = null, aMax = null;
   for (const p of points) {
@@ -2268,11 +2288,23 @@ function drawLiveCharts(now) {
   lastChartDraw = now || performance.now(); chartsDirty = false;
   const T = S.trip, w = chartWindow(), points = w.points, u = U(), au = AU();
   const alertD = spd(+S.settings.alert || 0);
+  const c = CZ.live;
+  c.active = w.mode === 'trip';
+  if (c.active) {
+    if (!points.length || points[0].t !== c.t0) { c.t0 = points.length ? points[0].t : null; c.end = null; c.curI = null; }
+    c.pts = points;
+    const cp = drawTrip('live', { ref: alertD || null, emptyS: 'La courbe se trace dès que le GPS donne une vitesse.', emptyA: 'Altitude en attente du baromètre ou du GPS.' });
+    setText('chSpeedTitle', 'Vitesse pendant le trajet');
+    setText('chAltTitle', 'Profil d\'altitude');
+    if (!cp) {
+      $('chSpeedStats').innerHTML = statHtml([['Moy.', `${T.movingMs > 10000 ? nf0.format(spd(T.distM / 1000 / (T.movingMs / 3600000))) : 0}`], ['Max', `${nf0.format(spd(T.maxKmh))} ${u.speed}`]]);
+      $('chAltStats').innerHTML = statHtml([['D+', `${nf0.format(alt(T.gainM))}`], ['D−', `${nf0.format(alt(T.lossM))} ${au.alt}`]]);
+    }
+    return;
+  }
+  $('zooms').hidden = true; cursorMarker('live', null);
   let speed, altS, xS, xA, rng = {};
-  if (w.mode === 'trip') {
-    ({ speed, altS } = seriesFor(points, false));
-    xS = minFmt; xA = (x) => `${nf1.format(x)} ${u.dist}`;
-  } else {
+  {
     const m = (t) => (t - w.end) / 60000;
     speed = points.map((p) => ({ x: m(p.t), y: p.v == null ? null : spd(p.v) }));
     altS = points.map((p) => ({ x: m(p.t), y: p.a == null ? null : alt(p.a) }));
@@ -2282,17 +2314,183 @@ function drawLiveCharts(now) {
   }
   drawChart($('chSpeed'), speed, Object.assign({ minSpan: 20, yMin: 0, ref: alertD || null, empty: 'La courbe se trace dès que le GPS donne une vitesse.', xFmt: xS }, rng));
   drawChart($('chAlt'), altS, Object.assign({ minSpan: au.alt === 'm' ? 20 : 60, empty: 'Altitude en attente du baromètre ou du GPS.', xFmt: xA }, rng));
-  setText('chSpeedTitle', w.mode === 'trip' ? 'Vitesse pendant le trajet' : 'Vitesse, ' + spanLabel(w.sec));
-  setText('chAltTitle', w.mode === 'trip' ? 'Profil d\'altitude' : 'Altitude, ' + spanLabel(w.sec));
+  setText('chSpeedTitle', 'Vitesse, ' + spanLabel(w.sec));
+  setText('chAltTitle', 'Altitude, ' + spanLabel(w.sec));
   const cs = chartStats(points);
-  $('chSpeedStats').innerHTML = statHtml(w.mode === 'trip'
-    ? [['Moy.', `${T.movingMs > 10000 ? nf0.format(spd(T.distM / 1000 / (T.movingMs / 3600000))) : 0}`], ['Max', `${nf0.format(spd(T.maxKmh))} ${u.speed}`]]
-    : [['Max', `${nf0.format(spd(cs.vMax))} ${u.speed}`]]);
-  $('chAltStats').innerHTML = statHtml(w.mode === 'trip'
-    ? [['D+', `${nf0.format(alt(T.gainM))}`], ['D−', `${nf0.format(alt(T.lossM))} ${au.alt}`]]
-    : cs.aMin == null ? [] : [['Min', nf0.format(alt(cs.aMin))], ['Max', `${nf0.format(alt(cs.aMax))} ${au.alt}`]]);
+  $('chSpeedStats').innerHTML = statHtml([['Max', `${nf0.format(spd(cs.vMax))} ${u.speed}`]]);
+  $('chAltStats').innerHTML = statHtml(cs.aMin == null ? [] : [['Min', nf0.format(alt(cs.aMin))], ['Max', `${nf0.format(alt(cs.aMax))} ${au.alt}`]]);
 }
-window.addEventListener('resize', () => { chartsDirty = true; cache.dialSize = null; });
+window.addEventListener('resize', () => { chartsDirty = true; cache.dialSize = null; if (detail) drawDetailCharts(); });
+
+/* ---------- Trip charts: a stretch of road, slid with the finger ----------
+   On a trip the two charts can show a stretch (500 m, 1 km…) instead of the whole trip. Sliding a finger
+   along either curve moves the stretch, both charts together, and a centre line reads the exact point:
+   time of day, speed, distance, altitude, also marked on the map. On the whole trip, touching or sliding
+   moves the reading line itself. A tap jumps there; a double tap goes back to the live end (or the start). */
+const ZOOMS = [0, 0.5, 1, 2, 5];   // in the display distance unit; 0 = whole trip
+const CZ = {
+  live: { ids: ['chSpeed', 'chAlt'], bar: 'zooms', stats: ['chSpeedStats', 'chAltStats'], pts: [], active: false, end: null, curI: null, t0: null, marker: null },
+  detail: { ids: ['dSpeed', 'dAlt'], bar: 'dZooms', stats: ['dSpeedStats', 'dAltStats'], pts: [], active: false, end: null, curI: null, t0: null, marker: null }
+};
+const clockFmt = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const nfZ = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 });
+const zoomM = (z) => z / U().dk * 1000;
+const pd = (p) => p.d || 0;
+function lowerD(pts, d) { let lo = 0, hi = pts.length; while (lo < hi) { const m = (lo + hi) >> 1; if (pd(pts[m]) < d) lo = m + 1; else hi = m; } return lo; }
+function upperD(pts, d) { let lo = 0, hi = pts.length; while (lo < hi) { const m = (lo + hi) >> 1; if (pd(pts[m]) <= d) lo = m + 1; else hi = m; } return lo; }
+function lowerT(pts, t) { let lo = 0, hi = pts.length; while (lo < hi) { const m = (lo + hi) >> 1; if (pts[m].t < t) lo = m + 1; else hi = m; } return lo; }
+function nearestD(pts, d) {
+  const i = lowerD(pts, d);
+  if (i <= 0) return 0; if (i >= pts.length) return pts.length - 1;
+  return d - pd(pts[i - 1]) <= pd(pts[i]) - d ? i - 1 : i;
+}
+function nearestT(pts, t) {
+  const i = lowerT(pts, t);
+  if (i <= 0) return 0; if (i >= pts.length) return pts.length - 1;
+  return t - pts[i - 1].t <= pts[i].t - t ? i - 1 : i;
+}
+/* When the trip reached distance d: the first moment (start of a stretch) or the last one (its end, stops included). */
+function timeAtD(pts, d, last) {
+  const k = last ? upperD(pts, d) : lowerD(pts, d), n = pts.length;
+  if (k <= 0) return pts[0].t; if (k >= n) return pts[n - 1].t;
+  const a = pts[k - 1], b = pts[k], dd = pd(b) - pd(a);
+  return dd > 0 ? a.t + (d - pd(a)) / dd * (b.t - a.t) : b.t;
+}
+/* Distance range shown: the whole trip, or a stretch ending at c.end (null = the live end). */
+function zoomView(c) {
+  const pts = c.pts, n = pts.length;
+  if (n < 2) return null;
+  const D0 = pd(pts[0]), D1 = pd(pts[n - 1]), z = +S.settings.chartZoom || 0, W = zoomM(z);
+  if (!z || W >= D1 - D0) return { a: D0, b: D1, D0, D1, W: D1 - D0, zoomed: false };
+  const b = c.end == null ? D1 : Math.min(D1, Math.max(D0 + W, c.end));
+  return { a: b - W, b, D0, D1, W, zoomed: true };
+}
+function cursorIndex(c, v) {
+  if (v.zoomed) return c.end == null ? null : nearestD(c.pts, (v.a + v.b) / 2);
+  return c.curI == null ? null : Math.min(c.curI, c.pts.length - 1);
+}
+function renderZoomBar(name, v) {
+  const c = CZ[name], box = $(c.bar), z = +S.settings.chartZoom || 0, u = U();
+  const len = v ? v.D1 - v.D0 : 0;
+  const opts = ZOOMS.filter((x) => x === 0 || x === z || zoomM(x) < len);
+  box.hidden = !c.active || opts.length < 2;
+  const key = opts.join() + '|' + z + '|' + u.dist;
+  if (box._key === key) return;
+  box._key = key; box.textContent = '';
+  for (const x of opts) {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'span-btn';
+    b.textContent = x === 0 ? 'Tout le trajet' : x < 1 && u.dist === 'km' ? `${nf0.format(x * 1000)} m` : `${nfZ.format(x)} ${u.dist}`;
+    b.setAttribute('aria-pressed', String(x === z));
+    b.addEventListener('click', () => setZoom(name, x));
+    box.appendChild(b);
+  }
+}
+/* Draws both charts of a trip with the current stretch and reading line; returns the point read, if any. */
+function drawTrip(name, o) {
+  const c = CZ[name], pts = c.pts, u = U(), au = AU(), v = zoomView(c);
+  const cvS = $(c.ids[0]), cvA = $(c.ids[1]);
+  renderZoomBar(name, v);
+  cvS._kind = 'time'; cvA._kind = 'dist';
+  const optS = { minSpan: 20, yMin: 0, ref: o.ref || null, empty: o.emptyS, xFmt: minFmt };
+  const optA = { minSpan: au.alt === 'm' ? 20 : 60, empty: o.emptyA, xFmt: (x) => `${nf1.format(x)} ${u.dist}` };
+  if (!v) { drawChart(cvS, [], optS); drawChart(cvA, [], optA); cursorMarker(name, null); return null; }
+  const t0 = pts[0].t;
+  const sl = v.zoomed ? pts.slice(Math.max(0, lowerD(pts, v.a) - 1), Math.min(pts.length, upperD(pts, v.b) + 1)) : pts;
+  const ci = cursorIndex(c, v), cp = ci == null ? null : pts[ci];
+  if (v.zoomed) {
+    optS.xMin = (timeAtD(pts, v.a, false) - t0) / 60000; optS.xMax = (timeAtD(pts, v.b, true) - t0) / 60000;
+    optA.xMin = dst(v.a); optA.xMax = dst(v.b);
+  }
+  if (cp) {
+    optS.cursor = { x: (cp.t - t0) / 60000, y: cp.v == null ? null : spd(cp.v) };
+    optA.cursor = { x: dst(pd(cp)), y: cp.a == null ? null : alt(cp.a) };
+  }
+  drawChart(cvS, sl.map((p) => ({ x: (p.t - t0) / 60000, y: p.v == null ? null : spd(p.v) })), optS);
+  drawChart(cvA, sl.map((p) => ({ x: dst(pd(p)), y: p.a == null ? null : alt(p.a) })), optA);
+  if (cp) {
+    $(c.stats[0]).innerHTML = statHtml([[clockFmt.format(new Date(cp.t)), cp.v == null ? '--' : `${nf0.format(spd(cp.v))} ${u.speed}`]]);
+    $(c.stats[1]).innerHTML = statHtml([[`${nf1.format(dst(pd(cp)))} ${u.dist}`, cp.a == null ? '--' : `${nf0.format(alt(cp.a))} ${au.alt}`]]);
+  }
+  cursorMarker(name, cp);
+  return cp;
+}
+/* The point read on the charts, shown on the map of the same view. */
+function cursorMarker(name, cp) {
+  const c = CZ[name], map = name === 'detail' ? dMap : MAPV.map;
+  if (c.marker && (!map || c.marker._map !== map)) { try { c.marker.remove(); } catch (e) {} c.marker = null; }
+  if (!map || !cp || cp.lat == null) { if (c.marker) { c.marker.remove(); c.marker = null; } return; }
+  const ll = [cp.lat, cp.lon];
+  if (!c.marker) c.marker = L.circleMarker(ll, { radius: 7, color: tok('--ink'), weight: 2, fillColor: tok('--accent'), fillOpacity: 1, interactive: false }).addTo(map);
+  else c.marker.setLatLng(ll);
+  if (name === 'detail' && map._loaded && !map.getBounds().contains(ll)) map.panTo(ll, { animate: false });
+}
+function redrawZoom(name) { if (name === 'live') drawLiveCharts(); else drawDetailCharts(); }
+function startOfStretch(c) { const z = +S.settings.chartZoom || 0; return z && c.pts.length ? pd(c.pts[0]) + zoomM(z) : null; }
+/* Double tap or selected stretch touched again: back to the live end (saved trip: its start), no reading line. */
+function resetZoom(name) { const c = CZ[name]; c.curI = null; c.end = name === 'detail' ? startOfStretch(c) : null; redrawZoom(name); }
+function setZoom(name, z) {
+  const c = CZ[name], cur = +S.settings.chartZoom || 0;
+  if (z === cur) { resetZoom(name); return; }
+  const v = zoomView(c), ci = v ? cursorIndex(c, v) : null, centre = ci == null ? null : pd(c.pts[ci]);
+  S.settings.chartZoom = z; persist(true);
+  c.end = null; c.curI = null;
+  if (z) {
+    if (centre != null) c.end = centre + zoomM(z) / 2;
+    else if (name === 'detail') c.end = startOfStretch(c);
+    if (!S.settings.zoomHint) { S.settings.zoomHint = true; persist(true); toast('Glisse le doigt sur une courbe pour avancer ou reculer'); }
+  } else if (centre != null) c.curI = ci;
+  redrawZoom(name);
+}
+function bindTripChart(name, idx) {
+  const c = CZ[name], cv = $(c.ids[idx]);
+  let g = null, lastTap = 0, raf = 0;
+  const redraw = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; redrawZoom(name); }); };
+  const indexAt = (clientX) => {
+    const m = cv._m;
+    if (!m || c.pts.length < 2) return null;
+    const xv = m.x0 + (clientX - cv.getBoundingClientRect().left - m.L) / m.W * (m.x1 - m.x0);
+    return cv._kind === 'dist' ? nearestD(c.pts, xv / U().dk * 1000) : nearestT(c.pts, c.pts[0].t + xv * 60000);
+  };
+  cv.addEventListener('pointerdown', (e) => {
+    if (!c.active || !cv._m) return;
+    const v = zoomView(c);
+    if (!v) return;
+    g = { x: e.clientX, moved: false, v, end0: v.b };
+    if (!v.zoomed) { const i = indexAt(e.clientX); if (i != null) { c.curI = i; redraw(); } }
+  });
+  cv.addEventListener('pointermove', (e) => {
+    if (!g || !cv._m) return;
+    const dx = e.clientX - g.x;
+    if (!g.moved && Math.abs(dx) < 6) return;
+    g.moved = true;
+    if (g.v.zoomed) c.end = Math.min(g.v.D1, Math.max(g.v.D0 + g.v.W, g.end0 - dx / cv._m.W * g.v.W));
+    else { const i = indexAt(e.clientX); if (i != null) c.curI = i; }
+    redraw();
+  });
+  const up = (e) => {
+    if (!g) return;
+    const v = g.v, moved = g.moved;
+    g = null;
+    if (e.type === 'pointercancel') return;
+    if (moved) {
+      // Slid back to the live end: follow the trip again.
+      if (name === 'live' && v.zoomed && c.end != null && c.end >= pd(c.pts[c.pts.length - 1]) - 1) { c.end = null; redraw(); }
+      return;
+    }
+    const now = performance.now();
+    if (now - lastTap < 320) { lastTap = 0; resetZoom(name); return; }
+    lastTap = now;
+    if (v.zoomed) { const i = indexAt(e.clientX); if (i != null) { c.end = Math.min(v.D1, Math.max(v.D0 + v.W, pd(c.pts[i]) + v.W / 2)); redraw(); } }
+  };
+  cv.addEventListener('pointerup', up);
+  cv.addEventListener('pointercancel', up);
+}
+for (const n of ['live', 'detail']) { bindTripChart(n, 0); bindTripChart(n, 1); }
+function drawDetailCharts() {
+  if (!detail) return;
+  const cp = drawTrip('detail', { emptyS: 'Pas de courbe pour ce trajet (enregistré avant la version 1.1).', emptyA: 'Pas d\'altitude pour ce trajet.' });
+  if (!cp) { $('dSpeedStats').textContent = ''; $('dAltStats').textContent = ''; }
+}
 
 /* ---------- Map (Leaflet + OpenStreetMap) ---------- */
 const MAPV = { map: null, line: null, me: null, acc: null, start: null, follow: true, lastPan: 0 };
@@ -2462,9 +2660,11 @@ function deleteTrip(id) {
 
 /* Trip detail: summary, charts, map, GPX */
 let detail = null, dMap = null;
-function closeDetailMap() { if (dMap) { dMap.remove(); dMap = null; } }
+function closeDetailMap() { if (dMap) { dMap.remove(); dMap = null; } CZ.detail.marker = null; }
 async function openDetail(h) {
   detail = { h, pts: [] };
+  Object.assign(CZ.detail, { pts: [], active: false, end: null, curI: null });
+  $('dZooms').hidden = true; $('dSpeedStats').textContent = ''; $('dAltStats').textContent = '';
   const u = U();
   $('dTitle').textContent = 'Trajet du ' + dateFmt.format(new Date(h.start || h.end));
   const cells = [['Distance', `${nf1.format(dst(h.distM))} ${u.dist}`], ['Durée', fmtDur(h.elapsedMs)], ['Moyenne', `${nf0.format(spd(avgOf(h)))} ${u.speed}`],
@@ -2477,9 +2677,10 @@ async function openDetail(h) {
   const pts = (await IDB.get(h.id)) || [];
   if (!detail || detail.h !== h) return;
   detail.pts = pts;
-  const { speed, altS } = seriesFor(pts, false);
-  drawChart($('dSpeed'), speed, { minSpan: 20, yMin: 0, empty: 'Pas de courbe pour ce trajet (enregistré avant la version 1.1).', xFmt: minFmt });
-  drawChart($('dAlt'), altS, { minSpan: AU().alt === 'm' ? 20 : 60, empty: 'Pas d\'altitude pour ce trajet.', xFmt: (x) => `${nf1.format(x)} ${u.dist}` });
+  const cz = CZ.detail;
+  cz.pts = pts; cz.active = pts.length >= 2; cz.curI = null;
+  cz.end = startOfStretch(cz);
+  drawDetailCharts();
   $('btnGpx').hidden = pts.length < 2 || inFrame && !NATIVE;
   closeDetailMap();
   dMap = makeMap('dMap', 'dMapNote');
@@ -2490,6 +2691,7 @@ async function openDetail(h) {
       L.circleMarker([pts[pts.length - 1].lat, pts[pts.length - 1].lon], { radius: 6, color: tok('--ground'), weight: 2, fillColor: tok('--over'), fillOpacity: 1 }).addTo(dMap);
       setTimeout(() => { if (dMap) { dMap.invalidateSize(); dMap.fitBounds(ln.getBounds(), { padding: [20, 20] }); } }, 60);
     } else dMap.setView([46.6, 2.4], 5);
+    drawDetailCharts();
   }
 }
 $('btnDetailDel').addEventListener('click', (e) => armConfirm(e.currentTarget, 'Confirmer la suppression', () => {

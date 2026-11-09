@@ -173,6 +173,16 @@ class MainActivity : ComponentActivity() {
         ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
 
+    private fun networkLocationEnabled(lm: LocationManager): Boolean {
+        fun on(provider: String) = try {
+            lm.allProviders.contains(provider) && lm.isProviderEnabled(provider)
+        } catch (e: Exception) {
+            false
+        }
+        return on(LocationManager.NETWORK_PROVIDER) ||
+            (Build.VERSION.SDK_INT >= 31 && on(LocationManager.FUSED_PROVIDER))
+    }
+
     private fun hasCoarse(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
@@ -200,7 +210,9 @@ class MainActivity : ComponentActivity() {
     private fun permissionState(): String {
         if (hasFine()) {
             val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-            return if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) "granted" else "gpsoff"
+            if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) return "granted"
+            // GPS switched off but Wi-Fi / cell-tower positioning still on: run on the network position.
+            return if (networkLocationEnabled(lm)) "netonly" else "gpsoff"
         }
         if (hasCoarse()) return "coarse"
         return if (deniedForGood) "denied" else "prompt"
