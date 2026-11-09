@@ -1450,7 +1450,7 @@ function hav(a, b) {
 }
 
 /* live: what the screen shows right now; not persisted */
-const live = { dispAlt: null, targetKmh: 0, dispKmh: 0, lastFix: null, lastFixAt: -1e9, acc: null, geoOff: false, net: false, diag: null, buf: [] };
+const live = { mapFix: null, dispAlt: null, targetKmh: 0, dispKmh: 0, lastFix: null, lastFixAt: -1e9, acc: null, geoOff: false, net: false, diag: null, buf: [] };
 
 /* ---------- Altimeter ----------
    Barometer (Android app): read live, as often as the sensor allows (or slower in eco mode), with or
@@ -1547,6 +1547,8 @@ function onFix(f) {
     if (f.speed != null && isFinite(f.speed) && f.speed >= 0 && f.acc <= 50) live.targetKmh = f.speed * 3.6 < 2 ? 0 : f.speed * 3.6;
     updateAltitude(f, true);
     pushLive(f.t);
+    // Move the map cursor too (shown hollow with its accuracy circle), but never add the point to the track.
+    mapPosition(f);
     return;
   }
   live.net = false;
@@ -1563,6 +1565,7 @@ function onFix(f) {
   if (kmh != null) { if (kmh < 2) kmh = 0; if (kmh > 400) kmh = null; }
   if (kmh != null) live.targetKmh = kmh;
   live.lastFix = f;
+  live.mapFix = f;
   updateAltitude(f, false);
   pushLive(f.t);
   mapPosition(f);
@@ -2273,7 +2276,7 @@ function drawLiveCharts(now) {
 window.addEventListener('resize', () => { chartsDirty = true; cache.dialSize = null; });
 
 /* ---------- Map (Leaflet + OpenStreetMap) ---------- */
-const MAPV = { map: null, line: null, me: null, start: null, follow: true, lastPan: 0 };
+const MAPV = { map: null, line: null, me: null, acc: null, start: null, follow: true, lastPan: 0 };
 const TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTR = '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap</a>';
 function makeMap(elId, noteId) {
@@ -2291,9 +2294,10 @@ function initMap() {
   MAPV.map.setView([46.6, 2.4], 6);
   MAPV.line = L.polyline([], { color: tok('--accent'), weight: 4, opacity: .95 }).addTo(MAPV.map);
   MAPV.me = L.circleMarker([0, 0], { radius: 7, color: tok('--ground'), weight: 3, fillColor: tok('--accent'), fillOpacity: 1 });
+  MAPV.acc = L.circle([0, 0], { radius: 1, color: tok('--accent'), weight: 1, opacity: .6, fillColor: tok('--accent'), fillOpacity: .12, interactive: false });
   MAPV.map.on('dragstart', () => setFollow(false));
   mapRedrawTrack();
-  if (live.lastFix) mapPosition(live.lastFix, true);
+  if (live.mapFix) mapPosition(live.mapFix, true);
 }
 function mapRedrawTrack() {
   if (!MAPV.map) return;
@@ -2307,10 +2311,20 @@ function mapPosition(f, force) {
   const ll = [f.lat, f.lon];
   if (!MAPV.map.hasLayer(MAPV.me)) { MAPV.me.addTo(MAPV.map); MAPV.map.setView(ll, 15); }
   MAPV.me.setLatLng(ll);
+  // Network position: hollow cursor + accuracy circle, so it reads as approximate.
+  if (f.net) {
+    MAPV.me.setStyle({ fillOpacity: 0.25 });
+    MAPV.acc.setLatLng(ll).setRadius(Math.max(5, f.acc || 0));
+    if (!MAPV.map.hasLayer(MAPV.acc)) MAPV.acc.addTo(MAPV.map);
+  } else {
+    MAPV.me.setStyle({ fillOpacity: 1 });
+    if (MAPV.map.hasLayer(MAPV.acc)) MAPV.acc.remove();
+  }
+  live.mapFix = f;
   const now = performance.now();
   if (MAPV.follow && ($('viewMap').hidden === false) && (force || now - MAPV.lastPan > 1000)) { MAPV.lastPan = now; MAPV.map.panTo(ll, { animate: !reduceMotion }); }
 }
-function setFollow(on) { MAPV.follow = on; $('btnFollow').setAttribute('aria-pressed', String(on)); if (on && live.lastFix) mapPosition(live.lastFix, true); }
+function setFollow(on) { MAPV.follow = on; $('btnFollow').setAttribute('aria-pressed', String(on)); if (on && live.mapFix) mapPosition(live.mapFix, true); }
 $('btnFollow').addEventListener('click', () => setFollow(!MAPV.follow));
 $('btnFit').addEventListener('click', () => {
   if (!MAPV.map || track.length < 2) { toast('Pas encore de tracé à afficher'); return; }
@@ -2325,7 +2339,7 @@ function setView(v) {
   $('viewDial').hidden = v !== 'dial'; $('viewCharts').hidden = v !== 'charts'; $('viewMap').hidden = v !== 'map';
   if (v === 'dial') dial.lastKey = '';
   if (v === 'charts') { chartsDirty = true; drawLiveCharts(); }
-  if (v === 'map') { initMap(); if (MAPV.map) { MAPV.map.invalidateSize(); if (MAPV.follow && live.lastFix) mapPosition(live.lastFix, true); } }
+  if (v === 'map') { initMap(); if (MAPV.map) { MAPV.map.invalidateSize(); if (MAPV.follow && live.mapFix) mapPosition(live.mapFix, true); } }
 }
 for (const b of document.querySelectorAll('.tab')) b.addEventListener('click', () => setView(b.dataset.view));
 
@@ -2347,7 +2361,7 @@ function startDemo(mode) {
   S = { v: 2, settings: demo.real.settings, totalM: demo.real.totalM || 48213400, trip: freshTrip(), history: demo.real.history, altCal: null };
   S.trip.state = 'running'; S.trip.startedAt = Date.now(); S.trip.runningSince = Date.now();
   track = []; mapResetTrack();
-  live.lastFix = null; live.targetKmh = 0; live.net = false; live.buf = [];
+  live.lastFix = null; live.mapFix = null; live.targetKmh = 0; live.net = false; live.buf = [];
   resetAltimeter();
   $('demoText').textContent = mode === 'preview'
     ? 'Aperçu : pas d\'accès au GPS ici, trajet simulé.'
@@ -2374,7 +2388,7 @@ function stopDemo() {
   demoDismissed = true;
   clearInterval(demo.timer);
   S = demo.real; track = demo.realTrack; demo = null;
-  live.lastFix = null; live.targetKmh = 0; live.lastFixAt = -1e9; live.net = false; live.buf = [];
+  live.lastFix = null; live.mapFix = null; live.targetKmh = 0; live.lastFixAt = -1e9; live.net = false; live.buf = [];
   resetAltimeter();
   mapRedrawTrack();
   $('demoBanner').hidden = true;
@@ -2508,7 +2522,7 @@ function applySkin(id) {
   persist(true);
   buildDial();
   chartsDirty = true;
-  if (MAPV.line) { MAPV.line.setStyle({ color: tok('--accent') }); MAPV.me.setStyle({ fillColor: tok('--accent'), color: tok('--ground') }); }
+  if (MAPV.line) { MAPV.line.setStyle({ color: tok('--accent') }); MAPV.me.setStyle({ fillColor: tok('--accent'), color: tok('--ground') }); MAPV.acc.setStyle({ color: tok('--accent'), fillColor: tok('--accent') }); }
   const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = tok('--ground');
   nativeCall('setBarColor', tok('--ground'));
   sendDisplayConfig();
@@ -2702,7 +2716,7 @@ if (NATIVE) {
 } else {
   $('verText').textContent = 'Cadran, version web. Carte : OpenStreetMap, Leaflet. L\'altitude web vient du GPS seul.';
 }
-window.__cadran = { onFix, getState: () => S, getTrack: () => track, getAlt: () => ALT, startDemo, stopDemo, setView };
+window.__cadran = { onFix, getMap: () => MAPV, getState: () => S, getTrack: () => track, getAlt: () => ALT, startDemo, stopDemo, setView };
 document.documentElement.dataset.skin = S.settings.skin;
 nativeCall('setBarColor', tok('--ground'));
 nativeCall('setBaroRate', +S.settings.baroHz || 0);
