@@ -1547,8 +1547,10 @@ function onFix(f) {
     if (f.speed != null && isFinite(f.speed) && f.speed >= 0 && f.acc <= 50) live.targetKmh = f.speed * 3.6 < 2 ? 0 : f.speed * 3.6;
     updateAltitude(f, true);
     pushLive(f.t);
-    // Move the map cursor too (shown hollow with its accuracy circle), but never add the point to the track.
+    // Move the map cursor too (shown hollow with its accuracy circle).
     mapPosition(f);
+    // Draw it in the track as well, but never count it in distance or max speed.
+    if (S.trip.state === 'running') recordNetPoint(f);
     return;
   }
   live.net = false;
@@ -1591,6 +1593,23 @@ function onFix(f) {
     persist();
   }
   recordPoint(f, kmh);
+}
+
+/* Network fix in the track: only once it has clearly moved beyond its own accuracy, so the line doesn't zigzag while parked. */
+function recordNetPoint(f) {
+  if (!(f.acc > 0) || f.acc > 2000) return;
+  const last = track[track.length - 1];
+  if (last) {
+    if (f.t - last.t < 5000) return;
+    if (hav(last, f) < Math.max(30, f.acc)) return;
+  }
+  const pt = { t: f.t, lat: +f.lat.toFixed(6), lon: +f.lon.toFixed(6), v: null,
+    a: ALT.value == null ? null : Math.round(ALT.value * 10) / 10, d: Math.round(S.trip.distM), n: 1 };
+  track.push(pt);
+  if (track.length > 40000) track.splice(0, track.length - 40000);
+  mapAddPoint(pt);
+  chartsDirty = true;
+  saveCurrentTrack();
 }
 
 /* Keep one point every 5 s, or every 20 m: enough for charts and the map, light enough to store hours. */
