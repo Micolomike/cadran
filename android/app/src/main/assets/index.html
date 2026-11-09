@@ -2264,7 +2264,22 @@ function renderSpans() {
   if (!sel.options.length) for (const [v, l] of SPANS) { const o = document.createElement('option'); o.value = v; o.textContent = v === 'auto' ? 'Auto (s\'adapte)' : l; sel.appendChild(o); }
   sel.value = cur;
 }
-function setChartSpan(v) { S.settings.chartSpan = v === 'auto' ? 'auto' : +v; persist(true); renderSpans(); chartsDirty = true; drawLiveCharts(); }
+function setChartSpan(v) {
+  const w0 = CZ.live.win;
+  S.settings.chartSpan = v === 'auto' ? 'auto' : +v; persist(true); renderSpans();
+  // Looking back in time: keep the same moment in the middle with the new duration.
+  CW.end = CW.end != null && w0 && v !== 'auto' ? CW.end - w0.sec * 500 + v * 500 : null;
+  chartsDirty = true; drawLiveCharts();
+}
+/* Looking back in a duration view: end of the window shown (null = now, following live). */
+const CW = { end: null };
+/* Everything kept for the duration views: the trip's points before the one-hour buffer, then the buffer. */
+function chartHistory() {
+  const b = live.buf;
+  if (S.trip.state === 'idle' || !track.length) return b;
+  const k = b.length ? lowerT(track, b[0].t) : track.length;
+  return k ? track.slice(0, k).concat(b) : b;
+}
 /* Points for the charts. A fixed duration shows the last N minutes (one point per second when the app
    has been open long enough, else the trip's recorded points). Auto shows the whole trip while recording,
    otherwise all the recent history. */
@@ -2274,7 +2289,7 @@ function chartWindow() {
   if (span === 'auto' || !span) {
     if (recording) return { mode: 'trip', points: track };
     const b = live.buf, sec = b.length ? Math.max(60, Math.ceil((b[b.length - 1].t - b[0].t) / 60000) * 60) : 300;
-    return { mode: 'window', points: b, sec, end: b.length ? b[b.length - 1].t : nowT };
+    return lookBack({ mode: 'window', points: b, sec, end: b.length ? b[b.length - 1].t : nowT });
   }
   const from = nowT - span * 1000, b = live.buf;
   let pts = b.filter((p) => p.t >= from);
@@ -2282,7 +2297,18 @@ function chartWindow() {
     const tp = track.filter((p) => p.t >= from);
     if (tp.length && (!pts.length || tp[0].t < pts[0].t)) pts = tp.concat(pts.filter((p) => p.t > tp[tp.length - 1].t));
   }
-  return { mode: 'window', points: pts, sec: span, end: nowT };
+  return lookBack({ mode: 'window', points: pts, sec: span, end: nowT });
+}
+/* Window moved back in time by sliding the charts. */
+function lookBack(w) {
+  if (CW.end == null) return w;
+  const h = chartHistory(), nowT = Date.now();
+  if (!h.length) { CW.end = null; return w; }
+  const end = Math.max(Math.min(h[0].t + w.sec * 1000, nowT), Math.min(nowT, CW.end));
+  if (end >= nowT - 500) { CW.end = null; return w; }
+  const from = end - w.sec * 1000;
+  const points = h.slice(Math.max(0, lowerT(h, from) - 1), Math.min(h.length, lowerT(h, end) + 1));
+  return { mode: 'window', points, sec: w.sec, end, panned: true, hist: h };
 }
 function drawLiveCharts(now) {
   lastChartDraw = now || performance.now(); chartsDirty = false;
@@ -2290,7 +2316,9 @@ function drawLiveCharts(now) {
   const alertD = spd(+S.settings.alert || 0);
   const c = CZ.live;
   c.active = w.mode === 'trip';
+  c.win = c.active ? null : w;
   if (c.active) {
+    CW.end = null;
     if (!points.length || points[0].t !== c.t0) { c.t0 = points.length ? points[0].t : null; c.end = null; c.curI = null; }
     c.pts = points;
     const cp = drawTrip('live', { ref: alertD || null, emptyS: 'La courbe se trace dès que le GPS donne une vitesse.', emptyA: 'Altitude en attente du baromètre ou du GPS.' });
@@ -2302,18 +2330,42 @@ function drawLiveCharts(now) {
     }
     return;
   }
-  $('zooms').hidden = true; cursorMarker('live', null);
+  $('zooms').hidden = true;
   let speed, altS, xS, xA, rng = {};
   {
     const m = (t) => (t - w.end) / 60000;
     speed = points.map((p) => ({ x: m(p.t), y: p.v == null ? null : spd(p.v) }));
     altS = points.map((p) => ({ x: m(p.t), y: p.a == null ? null : alt(p.a) }));
     const short = w.sec <= 120;
-    xS = xA = (x) => Math.abs(x) < 1e-6 ? 'maintenant' : short ? `${nf0.format(x * 60)} s` : `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 }).format(x)} min`;
+    const hm = new Intl.DateTimeFormat('fr-FR', w.sec <= 900 ? { hour: '2-digit', minute: '2-digit', second: '2-digit' } : { hour: '2-digit', minute: '2-digit' });
+    xS = xA = w.panned ? (x) => hm.format(new Date(w.end + x * 60000))
+      : (x) => Math.abs(x) < 1e-6 ? 'maintenant' : short ? `${nf0.format(x * 60)} s` : `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 }).format(x)} min`;
     rng = { xMin: -w.sec / 60, xMax: 0 };
   }
-  drawChart($('chSpeed'), speed, Object.assign({ minSpan: 20, yMin: 0, ref: alertD || null, empty: 'La courbe se trace dès que le GPS donne une vitesse.', xFmt: xS }, rng));
-  drawChart($('chAlt'), altS, Object.assign({ minSpan: au.alt === 'm' ? 20 : 60, empty: 'Altitude en attente du baromètre ou du GPS.', xFmt: xA }, rng));
+  // Moved back in time: a centre line reads the exact moment.
+  let cp = null;
+  if (w.panned) {
+    const h = w.hist;
+    cp = h[nearestT(h, w.end - w.sec * 500)];
+    if (cp && cp.lat == null && S.trip.state !== 'idle' && track.length) {
+      const tk = track[nearestT(track, cp.t)];
+      if (tk && Math.abs(tk.t - cp.t) < 5000) cp = Object.assign({}, cp, { lat: tk.lat, lon: tk.lon });
+    }
+  }
+  const curS = cp && { x: (cp.t - w.end) / 60000, y: cp.v == null ? null : spd(cp.v) };
+  const curA = cp && { x: (cp.t - w.end) / 60000, y: cp.a == null ? null : alt(cp.a) };
+  $('chSpeed')._kind = $('chAlt')._kind = 'clock';
+  drawChart($('chSpeed'), speed, Object.assign({ minSpan: 20, yMin: 0, ref: alertD || null, empty: 'La courbe se trace dès que le GPS donne une vitesse.', xFmt: xS, cursor: curS }, rng));
+  drawChart($('chAlt'), altS, Object.assign({ minSpan: au.alt === 'm' ? 20 : 60, empty: 'Altitude en attente du baromètre ou du GPS.', xFmt: xA, cursor: curA }, rng));
+  cursorMarker('live', cp);
+  if (w.panned) {
+    const ago = Math.max(0, Date.now() - w.end), agoTxt = ago < 60000 ? `${nf0.format(ago / 1000)} s` : `${nf0.format(ago / 60000)} min`;
+    setText('chSpeedTitle', `Vitesse, il y a ${agoTxt}`);
+    setText('chAltTitle', `Altitude, il y a ${agoTxt}`);
+    $('chSpeedStats').innerHTML = statHtml([[clockFmt.format(new Date(cp.t)), cp.v == null ? '--' : `${nf0.format(spd(cp.v))} ${u.speed}`]]);
+    $('chAltStats').innerHTML = statHtml([['Alt.', cp.a == null ? '--' : `${nf0.format(alt(cp.a))} ${au.alt}`]]);
+    return;
+  }
   setText('chSpeedTitle', 'Vitesse, ' + spanLabel(w.sec));
   setText('chAltTitle', 'Altitude, ' + spanLabel(w.sec));
   const cs = chartStats(points);
@@ -2452,6 +2504,13 @@ function bindTripChart(name, idx) {
     return cv._kind === 'dist' ? nearestD(c.pts, xv / U().dk * 1000) : nearestT(c.pts, c.pts[0].t + xv * 60000);
   };
   cv.addEventListener('pointerdown', (e) => {
+    try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+    if (name === 'live' && !c.active && c.win && cv._m) {
+      const w = c.win, h = chartHistory();
+      if (!h.length) return;
+      g = { x: e.clientX, moved: false, win: true, end0: w.end, sec: w.sec, h0: h[0].t, w };
+      return;
+    }
     if (!c.active || !cv._m) return;
     const v = zoomView(c);
     if (!v) return;
@@ -2463,15 +2522,33 @@ function bindTripChart(name, idx) {
     const dx = e.clientX - g.x;
     if (!g.moved && Math.abs(dx) < 6) return;
     g.moved = true;
+    if (g.win) {
+      const nowT = Date.now(), end = g.end0 - dx / cv._m.W * g.sec * 1000;
+      CW.end = Math.min(nowT, Math.max(Math.min(g.h0 + g.sec * 1000, nowT), end));
+      if (!S.settings.zoomHint) { S.settings.zoomHint = true; persist(true); }
+      redraw(); return;
+    }
     if (g.v.zoomed) c.end = Math.min(g.v.D1, Math.max(g.v.D0 + g.v.W, g.end0 - dx / cv._m.W * g.v.W));
     else { const i = indexAt(e.clientX); if (i != null) c.curI = i; }
     redraw();
   });
   const up = (e) => {
     if (!g) return;
-    const v = g.v, moved = g.moved;
+    const v = g.v, moved = g.moved, gw = g;
     g = null;
     if (e.type === 'pointercancel') return;
+    if (gw.win) {
+      if (moved) { if (CW.end != null && CW.end >= Date.now() - 1000) { CW.end = null; redraw(); } return; }
+      const now = performance.now();
+      if (now - lastTap < 320) { lastTap = 0; CW.end = null; redraw(); return; }
+      lastTap = now;
+      const m = cv._m;
+      if (m && (CW.end != null)) {
+        const xv = m.x0 + (e.clientX - cv.getBoundingClientRect().left - m.L) / m.W * (m.x1 - m.x0);
+        CW.end = Math.min(Date.now(), gw.w.end + xv * 60000 + gw.sec * 500); redraw();
+      }
+      return;
+    }
     if (moved) {
       // Slid back to the live end: follow the trip again.
       if (name === 'live' && v.zoomed && c.end != null && c.end >= pd(c.pts[c.pts.length - 1]) - 1) { c.end = null; redraw(); }
